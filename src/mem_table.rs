@@ -1,6 +1,6 @@
 use std::cmp::Ordering;
-use std::{collections::BTreeMap, ops::Bound, pin::pin, sync::Arc};
 use std::collections::btree_map;
+use std::{collections::BTreeMap, ops::Bound, pin::pin, sync::Arc};
 
 use futures::StreamExt;
 
@@ -137,10 +137,9 @@ where
             .flatten()
     }
 
-    pub(crate) fn iter(&self, ts: T) -> MemTableIterator<K, V, T> {
+    pub(crate) fn iter(&self) -> MemTableIterator<K, V, T> {
         let mut iterator = MemTableIterator {
             inner: self.data.iter(),
-            ts,
             item_buf: None,
         };
         // filling first item
@@ -158,7 +157,6 @@ where
 {
     inner: btree_map::Iter<'a, InternalKey<K, T>, Option<V>>,
     item_buf: Option<(&'a K, &'a Option<V>)>,
-    ts: T,
 }
 
 impl<'a, K, V, T> Iterator for MemTableIterator<'a, K, V, T>
@@ -169,12 +167,12 @@ where
     type Item = (&'a K, &'a Option<V>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some((InternalKey { key, ts }, value)) = self.inner.next() {
-            if *ts <= self.ts && matches!(self.item_buf.as_ref().map(|(k, _)| *k != key.as_ref()), Some(true) | None) {
+        for (InternalKey { key, .. }, value) in self.inner.by_ref() {
+            if let Some(true) | None = self.item_buf.as_ref().map(|(k, _)| *k != key.as_ref()) {
                 return self.item_buf.replace((key.as_ref(), value));
             }
         }
-        return self.item_buf.take()
+        self.item_buf.take()
     }
 }
 
@@ -232,16 +230,19 @@ mod tests {
 
             mem_table.insert(key_1.clone(), 0, Some(value_1.clone()));
             mem_table.insert(key_1.clone(), 1, Some(value_2.clone()));
-            mem_table.insert(key_1.clone(), 3, None);
 
             mem_table.insert(key_2.clone(), 0, Some(value_1.clone()));
 
-            let mut iterator = mem_table.iter(2);
+            let mut iterator = mem_table.iter();
 
             assert_eq!(iterator.next(), Some((key_1.as_ref(), &Some(value_2))));
             assert_eq!(iterator.next(), Some((key_2.as_ref(), &Some(value_1))));
 
-            let mut iterator = mem_table.iter(3);
+            drop(iterator);
+            mem_table.insert(key_1.clone(), 3, None);
+
+            let mut iterator = mem_table.iter();
+
             assert_eq!(iterator.next(), Some((key_1.as_ref(), &None)));
         });
     }
