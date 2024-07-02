@@ -4,11 +4,12 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
+use std::io::{Cursor, Error};
 
 use async_stream::stream;
 use crossbeam_queue::SegQueue;
-use executor::futures::Stream;
-use futures::{io::Cursor, ready, AsyncRead, AsyncWrite};
+use futures::{ready, Stream};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use ulid::Ulid;
 
 use super::WalProvider;
@@ -68,8 +69,8 @@ impl AsyncWrite for Buf {
         pin!(self.buf.as_mut().unwrap()).poll_flush(cx)
     }
 
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        if let Err(e) = ready!(pin!(self.buf.as_mut().unwrap()).poll_close(cx)) {
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Error>> {
+        if let Err(e) = ready!(pin!(self.buf.as_mut().unwrap()).poll_shutdown(cx)) {
             return Poll::Ready(Err(e));
         }
         let buf = self.buf.take().unwrap().into_inner();
@@ -79,11 +80,7 @@ impl AsyncWrite for Buf {
 }
 
 impl AsyncRead for Buf {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
         pin!(self.buf.as_mut().unwrap()).poll_read(cx, buf)
     }
 }

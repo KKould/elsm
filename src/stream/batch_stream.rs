@@ -5,7 +5,8 @@ use std::{
 };
 
 use arrow::record_batch::RecordBatch;
-use executor::futures::{FutureExt, Stream};
+use futures::Stream;
+use futures::Future;
 use pin_project::pin_project;
 
 use crate::{schema::Schema, stream::StreamError};

@@ -13,7 +13,7 @@ harness = false
 [dependencies]
 arrow = "51"
 criterion = { version = "0.3", features = ["async"] }
-elsm = { path = "../../../elsm" }
+elsm = { path = "../../../eelsm" }
 elsm_marco = { path = "../elsm_marco" }
 executor = { git = "https://github.com/ethe/executor.git", rev = "279fc08d7ba72b9ab8cfd73518f821ecc4956fae" }
 itertools = "0.13"

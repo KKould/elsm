@@ -1,11 +1,11 @@
 use std::{fs::OpenOptions, io::SeekFrom, sync::Arc};
 
 use async_lock::RwLock;
-use executor::{
-    fs,
-    futures::{util::SinkExt, AsyncSeekExt, AsyncWriteExt},
-};
 use futures::channel::mpsc::Sender;
+use futures::SinkExt;
+use tokio::io::AsyncWriteExt;
+use tokio::fs;
+use tokio::io::AsyncSeekExt;
 
 use crate::{
     schema::Schema,

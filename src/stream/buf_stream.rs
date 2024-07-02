@@ -4,8 +4,7 @@ use std::{
     ptr::NonNull,
     task::{Context, Poll},
 };
-
-use executor::futures::Stream;
+use futures::Stream;
 
 unsafe impl<K, V, E> Send for BufStream<'_, K, V, E>
 where

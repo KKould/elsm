@@ -4,8 +4,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use executor::futures::Stream;
-use futures::Future;
+use futures::{Future, Stream};
 use pin_project::pin_project;
 
 use crate::{
@@ -77,6 +76,7 @@ where
 
                         match future.as_mut().poll(cx) {
                             Poll::Ready(Ok(stream)) => {
+                                panic!();
                                 self.stream = Some(stream);
                                 self.poll_next(cx)
                             }

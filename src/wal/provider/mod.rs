@@ -2,8 +2,7 @@ pub mod fs;
 pub mod in_mem;
 
 use std::{future::Future, io};
-
-use executor::futures::Stream;
+use futures::Stream;
 
 use crate::wal::FileId;
 

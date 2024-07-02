@@ -3,8 +3,8 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
+use futures::Stream;
 
-use executor::futures::Stream;
 use pin_project::pin_project;
 use thiserror::Error;
 
