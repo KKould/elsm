@@ -10,6 +10,8 @@ use arrow::{
     datatypes::{DataType, Field, Fields, SchemaRef},
     record_batch::RecordBatch,
 };
+#[cfg(unix)]
+use pprof::criterion::{PProfProfiler, Output};
 use criterion::{criterion_group, criterion_main, Criterion};
 use elsm::{
     oracle::LocalOracle,
@@ -73,7 +75,7 @@ fn random(n: u32) -> u32 {
 fn elsm_bulk_load(c: &mut Criterion) {
     let count = AtomicU32::new(0_u32);
     let bytes = |len| -> String {
-        let mut r = StdRng::seed_from_u64(42);
+        let mut r = StdRng::seed_from_u64(count as u64);
 
         r.sample_iter(&Alphanumeric)
             .take(len)
@@ -226,9 +228,18 @@ fn elsm_empty_opens(c: &mut Criterion) {
     });
     let _ = std::fs::remove_dir_all("empty_opens");
 }
-
+#[cfg(unix)]
 criterion_group!(
-    benches,
+    name = benches;
+    config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
+    targets = bench,
+    elsm_bulk_load,
+    elsm_monotonic_crud,
+    elsm_random_crud,
+    elsm_empty_opens
+);
+#[cfg(windows)]
+criterion_group!(
     elsm_bulk_load,
     elsm_monotonic_crud,
     elsm_random_crud,

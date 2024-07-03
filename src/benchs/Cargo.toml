@@ -10,6 +10,9 @@ name = "benchmark"
 path = "src/main.rs"
 harness = false
 
+[target.'cfg(unix)'.dependencies]
+pprof = { version = "0.13", features = ["criterion"] }
+
 [dependencies]
 arrow = "51"
 criterion = { version = "0.3", features = ["async_tokio", "html_reports"] }
