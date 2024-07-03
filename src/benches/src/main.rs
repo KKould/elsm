@@ -198,7 +198,7 @@ fn elsm_random_crud(c: &mut Criterion) {
 
     c.bench_function("random gets", |b| {
         b.to_async(&rt).iter(|| async {
-            db.get(&random(SIZE), &0).await.unwrap();
+            let _ = db.get(&random(SIZE), &0).await;
         })
     });
 
