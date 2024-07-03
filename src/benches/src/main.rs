@@ -16,7 +16,7 @@ use elsm::{
     record::RecordType,
     schema::{Builder, Schema},
     serdes::{Decode, Encode},
-    wal::provider::in_mem::InMemProvider,
+    wal::provider::{fs::Fs, in_mem::InMemProvider},
     Db, DbOption,
 };
 use elsm_marco::elsm_schema;
@@ -26,7 +26,7 @@ use pprof::criterion::{Output, PProfProfiler};
 use rand::{distributions::Alphanumeric, rngs::StdRng, Rng, SeedableRng};
 use tokio::{
     io,
-    io::{AsyncRead, AsyncWrite},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite},
 };
 
 fn counter() -> usize {
@@ -88,11 +88,12 @@ fn elsm_bulk_load(c: &mut Criterion) {
             .enable_all()
             .build()
             .unwrap();
+        let path = format!("bulk load key/value lengths {}/{}", key_len, val_len);
         let db = rt.block_on(async {
             Db::new(
                 LocalOracle::default(),
-                InMemProvider::default(),
-                DbOption::new(format!("monotonic_crud/{}/", counter())),
+                Fs::new(&path).unwrap(),
+                DbOption::new(&path),
             )
             .await
             .unwrap()
@@ -127,11 +128,12 @@ fn elsm_monotonic_crud(c: &mut Criterion) {
         .enable_all()
         .build()
         .unwrap();
+    let path = format!("monotonic_crud/{}/", counter());
     let db = rt.block_on(async {
         Db::new(
             LocalOracle::default(),
-            InMemProvider::default(),
-            DbOption::new(format!("monotonic_crud/{}/", counter())),
+            Fs::new(&path).unwrap(),
+            DbOption::new(path),
         )
         .await
         .unwrap()
@@ -171,11 +173,12 @@ fn elsm_random_crud(c: &mut Criterion) {
         .enable_all()
         .build()
         .unwrap();
+    let path = format!("random_crud/{}/", counter());
     let db = rt.block_on(async {
         Db::new(
             LocalOracle::default(),
-            InMemProvider::default(),
-            DbOption::new(format!("random_crud/{}/", counter())),
+            Fs::new(&path).unwrap(),
+            DbOption::new(&path),
         )
         .await
         .unwrap()
@@ -213,13 +216,14 @@ fn elsm_empty_opens(c: &mut Criterion) {
         .enable_all()
         .build()
         .unwrap();
+    let path = format!("empty_opens/{}/", counter());
 
     c.bench_function("empty opens", |b| {
         b.to_async(&rt).iter(|| async {
-            Db::<UserInner, LocalOracle<<UserInner as Schema>::PrimaryKey>, InMemProvider>::new(
+            Db::<UserInner, LocalOracle<<UserInner as Schema>::PrimaryKey>, Fs>::new(
                 LocalOracle::default(),
-                InMemProvider::default(),
-                DbOption::new(format!("empty_opens/{}/", counter())),
+                Fs::new(&path).unwrap(),
+                DbOption::new(&path),
             )
             .await
             .unwrap()
@@ -229,17 +233,14 @@ fn elsm_empty_opens(c: &mut Criterion) {
 }
 #[cfg(unix)]
 criterion_group!(
-    benches
     name = benches;
-    config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
+    config = Criterion::default().sample_size(100000).with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
     targets = elsm_bulk_load, elsm_monotonic_crud, elsm_random_crud, elsm_empty_opens
 );
 #[cfg(windows)]
 criterion_group!(
-    benches,
-    elsm_bulk_load,
-    elsm_monotonic_crud,
-    elsm_random_crud,
-    elsm_empty_opens
+    name = benches;
+    config = Criterion::default().sample_size(100000);
+    targets = elsm_bulk_load, elsm_monotonic_crud, elsm_random_crud, elsm_empty_opens
 );
 criterion_main!(benches);

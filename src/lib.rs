@@ -543,10 +543,10 @@ impl DbOption {
         DbOption {
             path: path.into(),
             max_mem_table_size: 8 * 1024 * 1024,
-            immutable_chunk_num: 5,
+            immutable_chunk_num: 3,
             major_threshold_with_sst_size: 10,
             level_sst_magnification: 10,
-            max_sst_file_size: 64 * 1024 * 1024,
+            max_sst_file_size: 24 * 1024 * 1024,
             clean_channel_buffer: 10,
         }
     }

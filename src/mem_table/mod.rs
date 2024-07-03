@@ -130,7 +130,7 @@ where
 
     pub(crate) fn insert(&mut self, key: S::PrimaryKey, ts: TimeStamp, value: Option<S>) {
         self.max_ts = cmp::max(self.max_ts, ts);
-        self.written_size = key.size() + ts.size() + value.as_ref().map(Encode::size).unwrap_or(0);
+        self.written_size += key.size() + value.as_ref().map(Encode::size).unwrap_or(0);
 
         let _ = self.data.insert(InternalKey { key, ts }, value);
     }
