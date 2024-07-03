@@ -10,8 +10,6 @@ use arrow::{
     datatypes::{DataType, Field, Fields, SchemaRef},
     record_batch::RecordBatch,
 };
-#[cfg(unix)]
-use pprof::criterion::{PProfProfiler, Output};
 use criterion::{criterion_group, criterion_main, Criterion};
 use elsm::{
     oracle::LocalOracle,
@@ -24,6 +22,8 @@ use elsm::{
 use elsm_marco::elsm_schema;
 use itertools::Itertools;
 use lazy_static::lazy_static;
+#[cfg(unix)]
+use pprof::criterion::{Output, PProfProfiler};
 use rand::{distributions::Alphanumeric, rngs::StdRng, Rng, SeedableRng};
 use tokio::{
     io,
@@ -75,7 +75,7 @@ fn random(n: u32) -> u32 {
 fn elsm_bulk_load(c: &mut Criterion) {
     let count = AtomicU32::new(0_u32);
     let bytes = |len| -> String {
-        let mut r = StdRng::seed_from_u64(count as u64);
+        let mut r = StdRng::seed_from_u64(count.fetch_add(1, Ordering::Relaxed) as u64);
 
         r.sample_iter(&Alphanumeric)
             .take(len)
@@ -240,6 +240,7 @@ criterion_group!(
 );
 #[cfg(windows)]
 criterion_group!(
+    benches,
     elsm_bulk_load,
     elsm_monotonic_crud,
     elsm_random_crud,

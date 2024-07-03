@@ -1,5 +1,5 @@
 [package]
-name = "benchs"
+name = "benches"
 version = "0.1.0"
 edition = "2021"
 
@@ -11,12 +11,12 @@ path = "src/main.rs"
 harness = false
 
 [target.'cfg(unix)'.dependencies]
-pprof = { version = "0.13", features = ["criterion"] }
+pprof = { version = "0.13", features = ["criterion", "flamegraph"] }
 
 [dependencies]
 arrow = "51"
 criterion = { version = "0.3", features = ["async_tokio", "html_reports"] }
-elsm = { path = "../../../elsm" }
+elsm = { path = "../../../eelsm" }
 elsm_marco = { path = "../elsm_marco" }
 itertools = "0.13"
 lazy_static = "1"
