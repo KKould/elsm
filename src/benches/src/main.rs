@@ -232,7 +232,7 @@ fn elsm_empty_opens(c: &mut Criterion) {
 criterion_group!(
     name = benches;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
-    targets = bench,
+    targets = elsm_bulk_load, elsm_monotonic_crud, elsm_random_crud, elsm_empty_opens
     elsm_bulk_load,
     elsm_monotonic_crud,
     elsm_random_crud,
