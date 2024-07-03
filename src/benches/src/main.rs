@@ -20,7 +20,6 @@ use elsm::{
     Db, DbOption,
 };
 use elsm_marco::elsm_schema;
-use itertools::Itertools;
 use lazy_static::lazy_static;
 #[cfg(unix)]
 use pprof::criterion::{Output, PProfProfiler};
@@ -75,7 +74,7 @@ fn random(n: u32) -> u32 {
 fn elsm_bulk_load(c: &mut Criterion) {
     let count = AtomicU32::new(0_u32);
     let bytes = |len| -> String {
-        let mut r = StdRng::seed_from_u64(count.fetch_add(1, Ordering::Relaxed) as u64);
+        let r = StdRng::seed_from_u64(count.fetch_add(1, Ordering::Relaxed) as u64);
 
         r.sample_iter(&Alphanumeric)
             .take(len)
@@ -230,13 +229,10 @@ fn elsm_empty_opens(c: &mut Criterion) {
 }
 #[cfg(unix)]
 criterion_group!(
+    benches
     name = benches;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
     targets = elsm_bulk_load, elsm_monotonic_crud, elsm_random_crud, elsm_empty_opens
-    elsm_bulk_load,
-    elsm_monotonic_crud,
-    elsm_random_crud,
-    elsm_empty_opens
 );
 #[cfg(windows)]
 criterion_group!(

@@ -10,6 +10,9 @@ name = "benchmark"
 path = "src/main.rs"
 harness = false
 
+[profile.release]
+strip = "debuginfo"
+
 [target.'cfg(unix)'.dependencies]
 pprof = { version = "0.13", features = ["criterion", "flamegraph"] }
 
