@@ -38,6 +38,7 @@ where
         self.min.le(key) && self.max.ge(key)
     }
 
+    #[allow(dead_code)]
     pub(crate) fn is_meet(&self, target: &Scope<K>) -> bool {
         (self.min.le(&target.min) && self.max.ge(&target.min))
             || (self.min.le(&target.max) && self.max.ge(&target.max))

@@ -50,6 +50,7 @@ impl<S> MemTable<S>
 where
     S: Schema,
 {
+    #[allow(dead_code)]
     pub(crate) async fn iter(&self) -> Result<MemTableStream<S>, StreamError<S::PrimaryKey, S>> {
         let mut iterator = MemTableStream {
             inner: self.data.range::<InternalKey<S::PrimaryKey>, (

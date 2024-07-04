@@ -1,5 +1,4 @@
 mod compactor;
-mod consistent_hash;
 pub(crate) mod index_batch;
 pub(crate) mod mem_table;
 pub mod oracle;
@@ -444,7 +443,7 @@ where
     }
 }
 
-pub(crate) trait GetWrite<S>: Oracle<S::PrimaryKey>
+pub trait GetWrite<S>: Oracle<S::PrimaryKey>
 where
     S: schema::Schema,
 {
@@ -459,12 +458,12 @@ where
         value: S,
     ) -> impl Future<Output = Result<(), Box<dyn error::Error + Send + Sync + 'static>>>;
 
-    async fn remove(
+    fn remove(
         &self,
         record_type: RecordType,
         ts: TimeStamp,
         key: S::PrimaryKey,
-    ) -> Result<(), Box<dyn error::Error + Send + Sync + 'static>>;
+    ) -> impl Future<Output = Result<(), Box<dyn error::Error + Send + Sync + 'static>>>;
 
     fn write_batch(
         &self,

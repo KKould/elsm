@@ -14,6 +14,15 @@ use crate::{
     DbOption,
 };
 
+type LevelStreamFuture<'stream, S> = Pin<
+    Box<
+        dyn Future<
+                Output = Result<TableStream<'stream, S>, StreamError<<S as Schema>::PrimaryKey, S>>,
+            > + Send
+            + 'stream,
+    >,
+>;
+
 #[pin_project]
 pub(crate) struct LevelStream<'stream, S>
 where
@@ -24,19 +33,7 @@ where
     option: &'stream DbOption,
     gens: VecDeque<FileId>,
     stream: Option<TableStream<'stream, S>>,
-    future: Option<
-        Pin<
-            Box<
-                dyn Future<
-                        Output = Result<
-                            TableStream<'stream, S>,
-                            StreamError<<S as Schema>::PrimaryKey, S>,
-                        >,
-                    > + Send
-                    + 'stream,
-            >,
-        >,
-    >,
+    future: Option<LevelStreamFuture<'stream, S>>,
 }
 
 impl<'stream, S> LevelStream<'stream, S>

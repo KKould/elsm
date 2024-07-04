@@ -29,7 +29,9 @@ where
     S: Schema,
 {
     Buf(#[pin] BufStream<'a, S::PrimaryKey, S, StreamError<S::PrimaryKey, S>>),
+    #[allow(dead_code)]
     IndexBatch(#[pin] IndexBatchStream<'a, S>),
+    #[allow(dead_code)]
     MemTable(#[pin] MemTableStream<'a, S>),
     TransactionInner(#[pin] TransactionStream<'a, S, StreamError<S::PrimaryKey, S>>),
     Table(#[pin] TableStream<'a, S>),

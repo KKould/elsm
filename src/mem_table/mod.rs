@@ -1,12 +1,8 @@
 pub(crate) mod stream;
 
-use std::{cmp, cmp::Ordering, collections::BTreeMap, ops::Bound, pin::pin};
+use std::{cmp, cmp::Ordering, collections::BTreeMap, ops::Bound};
 
-use futures::StreamExt;
-
-use crate::{
-    oracle::TimeStamp, record::RecordType, schema::Schema, serdes::Encode, wal::WalRecover,
-};
+use crate::{oracle::TimeStamp, schema::Schema, serdes::Encode};
 
 #[derive(PartialEq, Eq, Debug)]
 pub(crate) struct InternalKey<K> {
@@ -61,71 +57,12 @@ impl<S> MemTable<S>
 where
     S: Schema,
 {
-    pub(crate) async fn from_wal<W>(wal: &mut W) -> Result<Self, W::Error>
-    where
-        W: WalRecover<S::PrimaryKey, S>,
-    {
-        let mut mem_table = Self::default();
-
-        mem_table.recover(wal).await?;
-
-        Ok(mem_table)
-    }
-
-    pub(crate) async fn recover<W>(&mut self, wal: &mut W) -> Result<(), W::Error>
-    where
-        W: WalRecover<S::PrimaryKey, S>,
-    {
-        let mut stream = pin!(wal.recover());
-        let mut batch = None;
-        while let Some(record) = stream.next().await {
-            let record = record?;
-            match record.record_type {
-                RecordType::Full => self.insert(record.key, record.ts, record.value),
-                RecordType::First => {
-                    if batch.is_none() {
-                        batch = Some(vec![record]);
-                        continue;
-                    }
-                    panic!("batch should be committed before next first record");
-                }
-                RecordType::Middle => {
-                    if let Some(batch) = &mut batch {
-                        batch.push(record);
-                        continue;
-                    }
-                    panic!("middle record should in a batch");
-                }
-                RecordType::Last => {
-                    if let Some(b) = batch.take() {
-                        for r in b {
-                            self.insert(r.key, r.ts, r.value);
-                        }
-                        self.insert(record.key, record.ts, record.value);
-                        continue;
-                    }
-                    panic!("last record should in a batch");
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-impl<S> MemTable<S>
-where
-    S: Schema,
-{
     pub(crate) fn is_excess(&self, max_size: usize) -> bool {
         self.written_size > max_size
     }
 
     pub(crate) fn is_empty(&self) -> bool {
         self.data.is_empty()
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.data.len()
     }
 
     pub(crate) fn insert(&mut self, key: S::PrimaryKey, ts: TimeStamp, value: Option<S>) {
