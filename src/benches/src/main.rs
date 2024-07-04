@@ -1,6 +1,9 @@
-use std::sync::{
-    atomic::{AtomicU32, Ordering},
-    Arc,
+use std::{
+    mem,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
 };
 
 use arrow::{
@@ -16,18 +19,22 @@ use elsm::{
     record::RecordType,
     schema::{Builder, Schema},
     serdes::{Decode, Encode},
-    wal::provider::{fs::Fs, in_mem::InMemProvider},
+    wal::provider::fs::Fs,
     Db, DbOption,
 };
 use elsm_marco::elsm_schema;
+use futures::future;
 use lazy_static::lazy_static;
 #[cfg(unix)]
 use pprof::criterion::{Output, PProfProfiler};
 use rand::{distributions::Alphanumeric, rngs::StdRng, Rng, SeedableRng};
 use tokio::{
     io,
-    io::{AsyncRead, AsyncReadExt, AsyncWrite},
+    io::{AsyncRead, AsyncWrite},
+    task,
 };
+
+const THREAD_NUM: usize = 8;
 
 fn counter() -> usize {
     use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
@@ -72,24 +79,38 @@ fn random(n: u32) -> u32 {
 }
 
 fn elsm_bulk_load(c: &mut Criterion) {
-    let count = AtomicU32::new(0_u32);
-    let bytes = |len| -> String {
+    fn bytes(len: usize, count: &AtomicU32) -> String {
         let r = StdRng::seed_from_u64(count.fetch_add(1, Ordering::Relaxed) as u64);
 
         r.sample_iter(&Alphanumeric)
             .take(len)
             .map(char::from)
             .collect()
-    };
+    }
 
-    let mut bench = |key_len, val_len| {
+    async fn test_fn(
+        db: &Db<TestStringInner, LocalOracle<String>, Fs>,
+        count: &AtomicU32,
+        key_len: usize,
+        val_len: usize,
+    ) {
+        db.write(
+            RecordType::Full,
+            0,
+            TestStringInner::new(bytes(key_len, count), bytes(val_len, count)),
+        )
+        .await
+        .unwrap();
+    }
+
+    let mut bench = |count, key_len, val_len| {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(8)
             .enable_all()
             .build()
             .unwrap();
-        let path = format!("bulk load key/value lengths {}/{}", key_len, val_len);
-        let db = rt.block_on(async {
+        let path = format!("bulk_load_key_value_lengths_{}_{}", key_len, val_len);
+        let db: Db<TestStringInner, LocalOracle<String>, Fs> = rt.block_on(async {
             Db::new(
                 LocalOracle::default(),
                 Fs::new(&path).unwrap(),
@@ -98,31 +119,73 @@ fn elsm_bulk_load(c: &mut Criterion) {
             .await
             .unwrap()
         });
-
         c.bench_function(
             &format!("bulk load key/value lengths {}/{}", key_len, val_len),
             |b| {
-                b.to_async(&rt).iter(|| async {
-                    db.write(
-                        RecordType::Full,
-                        0,
-                        TestStringInner::new(bytes(key_len), bytes(val_len)),
+                // Safety: read-only would not break data.
+                b.to_async(&rt).iter(|| {
+                    test_fn(
+                        unsafe { mem::transmute::<_, &'static Db<_, _, _>>(&db) },
+                        count,
+                        key_len,
+                        val_len,
                     )
-                    .await
-                    .unwrap();
+                })
+            },
+        );
+        c.bench_function(
+            &format!(
+                "multi thread bulk load key/value lengths {}/{}",
+                key_len, val_len
+            ),
+            |b| {
+                b.to_async(&rt).iter(|| async {
+                    let mut tasks = vec![];
+
+                    for _ in 0..THREAD_NUM {
+                        // Safety: read-only would not break data.
+                        tasks.push(task::spawn(test_fn(
+                            unsafe { mem::transmute::<_, &'static Db<_, _, _>>(&db) },
+                            count,
+                            key_len,
+                            val_len,
+                        )));
+                    }
+                    future::join_all(tasks).await;
                 })
             },
         );
     };
 
+    let count = AtomicU32::new(0_u32);
+
     for key_len in &[10_usize, 128, 256, 512] {
         for val_len in &[0_usize, 10, 128, 256, 512, 1024, 2048, 4096, 8192] {
-            bench(*key_len, *val_len)
+            bench(
+                unsafe { mem::transmute::<_, &'static AtomicU32>(&count) },
+                *key_len,
+                *val_len,
+            )
         }
     }
 }
 
 fn elsm_monotonic_crud(c: &mut Criterion) {
+    async fn test_fn_write(db: &Db<UserInner, LocalOracle<u32>, Fs>, count: &AtomicU32) {
+        let count = count.fetch_add(1, Ordering::Relaxed);
+        db.write(RecordType::Full, 0, UserInner::new(count, count))
+            .await
+            .unwrap();
+    }
+    async fn test_fn_get(db: &Db<UserInner, LocalOracle<u32>, Fs>, count: &AtomicU32) {
+        let count = count.fetch_add(1, Ordering::Relaxed);
+        let _ = db.get(&count, &0).await;
+    }
+    async fn test_fn_remove(db: &Db<UserInner, LocalOracle<u32>, Fs>, count: &AtomicU32) {
+        let count = count.fetch_add(1, Ordering::Relaxed);
+        db.remove(RecordType::Full, 0, count).await.unwrap();
+    }
+
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(8)
         .enable_all()
@@ -141,32 +204,94 @@ fn elsm_monotonic_crud(c: &mut Criterion) {
 
     c.bench_function("monotonic inserts", |b| {
         let count = AtomicU32::new(0_u32);
+        b.to_async(&rt).iter(|| test_fn_write(&db, &count))
+    });
+    c.bench_function("multi thread monotonic inserts", |b| {
+        let count = AtomicU32::new(0_u32);
+
         b.to_async(&rt).iter(|| async {
-            let count = count.fetch_add(1, Ordering::Relaxed);
-            db.write(RecordType::Full, 0, UserInner::new(count, count))
-                .await
-                .unwrap();
+            let (db, count) = unsafe {
+                (
+                    mem::transmute::<_, &'static Db<_, _, _>>(&db),
+                    mem::transmute::<_, &'static AtomicU32>(&count),
+                )
+            };
+            let mut tasks = vec![];
+
+            for _ in 0..THREAD_NUM {
+                // Safety: read-only would not break data.
+                tasks.push(task::spawn(test_fn_write(db, count)));
+            }
+            future::join_all(tasks).await;
         })
     });
 
     c.bench_function("monotonic gets", |b| {
         let count = AtomicU32::new(0_u32);
+        b.to_async(&rt).iter(|| test_fn_get(&db, &count))
+    });
+    c.bench_function("multi thread monotonic gets", |b| {
+        let count = AtomicU32::new(0_u32);
+
         b.to_async(&rt).iter(|| async {
-            let count = count.fetch_add(1, Ordering::Relaxed);
-            let _ = db.get(&count, &0).await;
+            let (db, count) = unsafe {
+                (
+                    mem::transmute::<_, &'static Db<_, _, _>>(&db),
+                    mem::transmute::<_, &'static AtomicU32>(&count),
+                )
+            };
+            let mut tasks = vec![];
+
+            for _ in 0..THREAD_NUM {
+                // Safety: read-only would not break data.
+                tasks.push(task::spawn(test_fn_get(&db, &count)));
+            }
+            future::join_all(tasks).await;
         })
     });
 
     c.bench_function("monotonic removals", |b| {
         let count = AtomicU32::new(0_u32);
+        b.to_async(&rt).iter(|| test_fn_remove(&db, &count))
+    });
+    c.bench_function("multi thread monotonic removals", |b| {
+        let count = AtomicU32::new(0_u32);
+
         b.to_async(&rt).iter(|| async {
-            let count = count.fetch_add(1, Ordering::Relaxed);
-            db.remove(RecordType::Full, 0, count).await.unwrap();
+            let (db, count) = unsafe {
+                (
+                    mem::transmute::<_, &'static Db<_, _, _>>(&db),
+                    mem::transmute::<_, &'static AtomicU32>(&count),
+                )
+            };
+            let mut tasks = vec![];
+
+            for _ in 0..THREAD_NUM {
+                // Safety: read-only would not break data.
+                tasks.push(task::spawn(test_fn_remove(&db, &count)));
+            }
+            future::join_all(tasks).await;
         })
     });
 }
 
 fn elsm_random_crud(c: &mut Criterion) {
+    async fn test_fn_write(db: &Db<UserInner, LocalOracle<u32>, Fs>) {
+        db.write(
+            RecordType::Full,
+            0,
+            UserInner::new(random(SIZE), random(SIZE)),
+        )
+        .await
+        .unwrap();
+    }
+    async fn test_fn_get(db: &Db<UserInner, LocalOracle<u32>, Fs>) {
+        let _ = db.get(&random(SIZE), &0).await;
+    }
+    async fn test_fn_remove(db: &Db<UserInner, LocalOracle<u32>, Fs>) {
+        db.remove(RecordType::Full, 0, random(SIZE)).await.unwrap();
+    }
+
     const SIZE: u32 = 65536;
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(8)
@@ -185,31 +310,66 @@ fn elsm_random_crud(c: &mut Criterion) {
     });
 
     c.bench_function("random inserts", |b| {
+        b.to_async(&rt).iter(|| test_fn_write(&db))
+    });
+    c.bench_function("multi thread random inserts", |b| {
         b.to_async(&rt).iter(|| async {
-            db.write(
-                RecordType::Full,
-                0,
-                UserInner::new(random(SIZE), random(SIZE)),
-            )
-            .await
-            .unwrap();
+            let mut tasks = vec![];
+
+            for _ in 0..THREAD_NUM {
+                // Safety: read-only would not break data.
+                tasks.push(task::spawn(test_fn_write(unsafe {
+                    mem::transmute::<_, &'static Db<_, _, _>>(&db)
+                })));
+            }
+            future::join_all(tasks).await;
         })
     });
 
-    c.bench_function("random gets", |b| {
+    c.bench_function("random gets", |b| b.to_async(&rt).iter(|| test_fn_get(&db)));
+    c.bench_function("multi thread random gets", |b| {
         b.to_async(&rt).iter(|| async {
-            let _ = db.get(&random(SIZE), &0).await;
+            let mut tasks = vec![];
+
+            for _ in 0..THREAD_NUM {
+                // Safety: read-only would not break data.
+                tasks.push(task::spawn(test_fn_get(unsafe {
+                    mem::transmute::<_, &'static Db<_, _, _>>(&db)
+                })));
+            }
+            future::join_all(tasks).await;
         })
     });
 
     c.bench_function("random removals", |b| {
+        b.to_async(&rt).iter(|| test_fn_remove(&db))
+    });
+    c.bench_function("multi thread random removals", |b| {
         b.to_async(&rt).iter(|| async {
-            db.remove(RecordType::Full, 0, random(SIZE)).await.unwrap();
+            let mut tasks = vec![];
+
+            for _ in 0..THREAD_NUM {
+                // Safety: read-only would not break data.
+                tasks.push(task::spawn(test_fn_get(unsafe {
+                    mem::transmute::<_, &'static Db<_, _, _>>(&db)
+                })));
+            }
+            future::join_all(tasks).await;
         })
     });
 }
 
 fn elsm_empty_opens(c: &mut Criterion) {
+    async fn test_fn_open(path: &String) -> Db<UserInner, LocalOracle<u32>, Fs> {
+        Db::new(
+            LocalOracle::default(),
+            Fs::new(&path).unwrap(),
+            DbOption::new(&path),
+        )
+        .await
+        .unwrap()
+    }
+
     let _ = std::fs::remove_dir_all("empty_opens");
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(8)
@@ -219,16 +379,9 @@ fn elsm_empty_opens(c: &mut Criterion) {
     let path = format!("empty_opens/{}/", counter());
 
     c.bench_function("empty opens", |b| {
-        b.to_async(&rt).iter(|| async {
-            Db::<UserInner, LocalOracle<<UserInner as Schema>::PrimaryKey>, Fs>::new(
-                LocalOracle::default(),
-                Fs::new(&path).unwrap(),
-                DbOption::new(&path),
-            )
-            .await
-            .unwrap()
-        })
+        b.to_async(&rt).iter(|| test_fn_open(&path))
     });
+    // Kould: is it necessary to test multi-threading?
     let _ = std::fs::remove_dir_all("empty_opens");
 }
 #[cfg(unix)]

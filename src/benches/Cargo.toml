@@ -21,6 +21,7 @@ arrow = "51"
 criterion = { version = "0.5", features = ["async_tokio", "html_reports"] }
 elsm = { path = "../../../elsm" }
 elsm_marco = { path = "../elsm_marco" }
+futures = "0.3"
 itertools = "0.13"
 lazy_static = "1"
 rand = "0.8"
