@@ -13,24 +13,27 @@ use crate::{
     stream::{EStreamImpl, StreamError},
     utils::CmpKeyItem,
 };
+use crate::wal::provider::FileProvider;
 
 #[pin_project]
-pub struct MergeStream<'stream, S>
+pub struct MergeStream<'stream, S, FP>
 where
     S: Schema,
+    FP: FileProvider,
 {
     #[allow(clippy::type_complexity)]
     heap: BinaryHeap<Reverse<(CmpKeyItem<S::PrimaryKey, Option<S>>, usize)>>,
-    iters: Vec<EStreamImpl<'stream, S>>,
+    iters: Vec<EStreamImpl<'stream, S, FP>>,
     item_buf: Option<(S::PrimaryKey, Option<S>)>,
 }
 
-impl<'stream, S> MergeStream<'stream, S>
+impl<'stream, S, FP> MergeStream<'stream, S, FP>
 where
     S: Schema,
+    FP: FileProvider,
 {
     pub(crate) async fn new(
-        mut iters: Vec<EStreamImpl<'stream, S>>,
+        mut iters: Vec<EStreamImpl<'stream, S, FP>>,
     ) -> Result<Self, StreamError<S::PrimaryKey, S>> {
         let mut heap = BinaryHeap::new();
 
@@ -56,9 +59,10 @@ where
     }
 }
 
-impl<'stream, S> Stream for MergeStream<'stream, S>
+impl<'stream, S, FP> Stream for MergeStream<'stream, S, FP>
 where
     S: Schema,
+    FP: FileProvider,
 {
     type Item = Result<(S::PrimaryKey, Option<S>), StreamError<S::PrimaryKey, S>>;
 
@@ -101,6 +105,7 @@ mod tests {
         stream::{buf_stream::BufStream, merge_stream::MergeStream, EStreamImpl},
         tests::UserInner,
     };
+    use crate::wal::provider::in_mem::InMemProvider;
 
     #[test]
     fn iter() {
@@ -164,7 +169,7 @@ mod tests {
                 (6, None),
             ]);
 
-            let mut iterator = MergeStream::<UserInner>::new(vec![
+            let mut iterator = MergeStream::<UserInner, InMemProvider>::new(vec![
                 EStreamImpl::Buf(iter_3),
                 EStreamImpl::Buf(iter_2),
                 EStreamImpl::Buf(iter_1),

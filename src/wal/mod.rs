@@ -10,43 +10,44 @@ use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use ulid::Ulid;
 
-use self::provider::WalProvider;
+use self::provider::FileProvider;
 use crate::{
     record::Record,
     serdes::{Decode, Encode},
 };
+use crate::wal::provider::FileType;
 
 pub(crate) type FileId = Ulid;
 
 #[derive(Debug)]
-pub(crate) struct WalManager<WP> {
-    pub(crate) wal_provider: WP,
+pub(crate) struct FileManager<FP> {
+    pub(crate) file_provider: FP,
 }
 
-impl<WP> WalManager<WP>
+impl<FP> FileManager<FP>
 where
-    WP: WalProvider,
+    FP: FileProvider,
 {
-    pub(crate) fn new(wal_provider: WP) -> Self {
-        Self { wal_provider }
+    pub(crate) fn new(file_provider: FP) -> Self {
+        Self { file_provider }
     }
 
-    pub(crate) async fn create_wal_file<K, V>(&self) -> io::Result<WalFile<WP::File, K, V>> {
+    pub(crate) async fn create_wal_file<K, V>(&self) -> io::Result<WalFile<FP::File, K, V>> {
         let file_id = Ulid::new();
-        let file = self.wal_provider.open(file_id).await?;
+        let file = self.file_provider.open(file_id, FileType::WAL).await?;
 
         self.pack_wal_file(file, file_id).await
     }
 
     pub(crate) fn remove_wal_file(&self, file_id: FileId) -> io::Result<()> {
-        self.wal_provider.remove(file_id)
+        self.file_provider.remove(file_id)
     }
 
     pub(crate) async fn pack_wal_file<K, V>(
         &self,
-        file: WP::File,
+        file: FP::File,
         file_id: FileId,
-    ) -> io::Result<WalFile<WP::File, K, V>> {
+    ) -> io::Result<WalFile<FP::File, K, V>> {
         Ok(WalFile::new(file, file_id))
     }
 }

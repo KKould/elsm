@@ -12,7 +12,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use tokio::fs::File;
 
-use super::WalProvider;
+use super::{FileType, FileProvider};
 use crate::wal::FileId;
 
 static WAL_REGEX: Lazy<Regex> =
@@ -31,15 +31,15 @@ impl Fs {
     }
 }
 
-impl WalProvider for Fs {
+impl FileProvider for Fs {
     type File = File;
 
-    async fn open(&self, fid: FileId) -> io::Result<Self::File> {
+    async fn open(&self, fid: FileId, file_type: FileType) -> io::Result<Self::File> {
         Ok(OpenOptions::new()
             .create(true)
             .write(true)
             .read(true)
-            .open(self.path.join(format!("{}.wal", fid)))?
+            .open(self.path.join(format!("{}.{}", fid, file_type)))?
             .into())
     }
 
@@ -48,7 +48,7 @@ impl WalProvider for Fs {
         Ok(())
     }
 
-    fn list(&self) -> io::Result<impl Stream<Item = io::Result<(Self::File, FileId)>>> {
+    fn wal_list(&self) -> io::Result<impl Stream<Item = io::Result<(Self::File, FileId)>>> {
         let mut entries: Vec<DirEntry> = fs::read_dir(&self.path)?.try_collect()?;
         entries.sort_by_key(|entry| entry.file_name());
 

@@ -18,22 +18,26 @@ use crate::{
     stream::{merge_stream::MergeStream, EStreamImpl, StreamError},
     GetWrite,
 };
+use crate::wal::provider::FileProvider;
 
 #[derive(Debug)]
-pub struct Transaction<S, DB>
+pub struct Transaction<S, FP, DB>
 where
     S: Schema,
-    DB: GetWrite<S>,
+    FP: FileProvider,
+    DB: GetWrite<S, FP>,
 {
     pub(crate) read_at: TimeStamp,
     pub(crate) local: BTreeMap<S::PrimaryKey, Option<S>>,
     share: Arc<DB>,
+    _p: PhantomData<FP>
 }
 
-impl<S, DB> Transaction<S, DB>
+impl<S, FP, DB> Transaction<S, FP, DB>
 where
     S: Schema,
-    DB: GetWrite<S>,
+    FP: FileProvider,
+    DB: GetWrite<S, FP>,
 {
     pub(crate) fn new(share: Arc<DB>) -> Self {
         let read_at = share.start_read();
@@ -41,6 +45,7 @@ where
             read_at,
             local: BTreeMap::new(),
             share,
+            _p: Default::default(),
         }
     }
 
@@ -86,7 +91,7 @@ where
         &self,
         lower: Option<&S::PrimaryKey>,
         upper: Option<&S::PrimaryKey>,
-    ) -> Result<MergeStream<S>, StreamError<S::PrimaryKey, S>> {
+    ) -> Result<MergeStream<S, FP>, StreamError<S::PrimaryKey, S>> {
         let mut iters = self.share.inner_range(lower, upper, &self.read_at).await?;
         let range = self
             .local

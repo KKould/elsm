@@ -2,18 +2,34 @@ pub mod fs;
 pub mod in_mem;
 
 use std::{future::Future, io};
+use std::fmt::{Display, Formatter};
 
 use futures::Stream;
+use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite};
 
 use crate::wal::FileId;
 
-pub trait WalProvider: Send + Sync + 'static {
-    type File: Unpin + Send + Sync + 'static;
+pub enum FileType {
+    WAL,
+    PARQUET,
+}
 
-    fn open(&self, fid: FileId) -> impl Future<Output = io::Result<Self::File>>;
+pub trait FileProvider: Send + Sync + 'static {
+    type File: AsyncRead + AsyncWrite + AsyncSeek + Unpin + Send + Sync + 'static;
+
+    fn open(&self, fid: FileId, file_type: FileType) -> impl Future<Output = io::Result<Self::File>> + Send;
 
     // FIXME: async
     fn remove(&self, fid: FileId) -> io::Result<()>;
 
-    fn list(&self) -> io::Result<impl Stream<Item = io::Result<(Self::File, FileId)>>>;
+    fn wal_list(&self) -> io::Result<impl Stream<Item = io::Result<(Self::File, FileId)>>>;
+}
+
+impl Display for FileType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FileType::WAL => write!(f, "wal"),
+            FileType::PARQUET => write!(f, "parquet")
+        }
+    }
 }

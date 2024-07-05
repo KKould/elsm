@@ -16,6 +16,7 @@ use crate::{
     stream::{buf_stream::BufStream, level_stream::LevelStream, table_stream::TableStream},
     transaction::TransactionStream,
 };
+use crate::wal::provider::FileProvider;
 
 pub(crate) mod batch_stream;
 pub(crate) mod buf_stream;
@@ -24,9 +25,10 @@ pub(crate) mod merge_stream;
 pub(crate) mod table_stream;
 
 #[pin_project(project = EStreamImplProj)]
-pub(crate) enum EStreamImpl<'a, S>
+pub(crate) enum EStreamImpl<'a, S, FP>
 where
     S: Schema,
+    FP: FileProvider,
 {
     Buf(#[pin] BufStream<'a, S::PrimaryKey, S, StreamError<S::PrimaryKey, S>>),
     #[allow(dead_code)]
@@ -34,13 +36,14 @@ where
     #[allow(dead_code)]
     MemTable(#[pin] MemTableStream<'a, S>),
     TransactionInner(#[pin] TransactionStream<'a, S, StreamError<S::PrimaryKey, S>>),
-    Table(#[pin] TableStream<'a, S>),
-    Level(#[pin] LevelStream<'a, S>),
+    Table(#[pin] TableStream<'a, S, FP>),
+    Level(#[pin] LevelStream<'a, S, FP>),
 }
 
-impl<'a, S> Stream for EStreamImpl<'a, S>
+impl<'a, S, FP> Stream for EStreamImpl<'a, S, FP>
 where
     S: Schema,
+    FP: FileProvider,
 {
     type Item = Result<(S::PrimaryKey, Option<S>), StreamError<S::PrimaryKey, S>>;
 
@@ -56,9 +59,10 @@ where
     }
 }
 
-impl<S> std::fmt::Display for EStreamImpl<'_, S>
+impl<S, FP> std::fmt::Display for EStreamImpl<'_, S, FP>
 where
     S: Schema,
+    FP: FileProvider,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

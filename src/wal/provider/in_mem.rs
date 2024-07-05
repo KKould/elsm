@@ -5,14 +5,15 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
+use std::io::SeekFrom;
 
 use async_stream::stream;
 use crossbeam_queue::SegQueue;
 use futures::{ready, Stream};
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
 use ulid::Ulid;
 
-use super::WalProvider;
+use super::{FileType, FileProvider};
 use crate::wal::FileId;
 
 #[derive(Debug, Default, Clone)]
@@ -26,10 +27,10 @@ impl InMemProvider {
     }
 }
 
-impl WalProvider for InMemProvider {
+impl FileProvider for InMemProvider {
     type File = Buf;
 
-    async fn open(&self, _fid: FileId) -> std::io::Result<Self::File> {
+    async fn open(&self, _fid: FileId, _file_type: FileType) -> std::io::Result<Self::File> {
         Ok(Buf {
             buf: Some(Cursor::new(Vec::new())),
             wals: self.wals.clone(),
@@ -41,7 +42,7 @@ impl WalProvider for InMemProvider {
         Ok(())
     }
 
-    fn list(&self) -> io::Result<impl Stream<Item = io::Result<(Self::File, FileId)>>> {
+    fn wal_list(&self) -> io::Result<impl Stream<Item = io::Result<(Self::File, FileId)>>> {
         Ok(stream! {
             yield Ok((Buf {
                 buf: Some(Cursor::new(Vec::new())),
@@ -86,5 +87,15 @@ impl AsyncRead for Buf {
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         pin!(self.buf.as_mut().unwrap()).poll_read(cx, buf)
+    }
+}
+
+impl AsyncSeek for Buf {
+    fn start_seek(mut self: Pin<&mut Self>, position: SeekFrom) -> io::Result<()> {
+        pin!(self.buf.as_mut().unwrap()).start_seek(position)
+    }
+
+    fn poll_complete(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<u64>> {
+        pin!(self.buf.as_mut().unwrap()).poll_complete(cx)
     }
 }

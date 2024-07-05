@@ -11,51 +11,52 @@ use crate::{
     schema::Schema,
     serdes::Encode,
     version::{cleaner::CleanTag, edit::VersionEdit, Version, VersionError, VersionRef},
-    wal::{provider::WalProvider, FileId, WalManager},
+    wal::{provider::FileProvider, FileId, FileManager},
     DbOption,
 };
 
-pub(crate) struct VersionSetInner<S>
+pub(crate) struct VersionSetInner<S, FP>
 where
     S: Schema,
+    FP: FileProvider,
 {
-    current: VersionRef<S>,
+    current: VersionRef<S, FP>,
     log: fs::File,
 }
 
-pub(crate) struct VersionSet<S, WP>
+pub(crate) struct VersionSet<S, FP>
 where
     S: Schema,
-    WP: WalProvider,
+    FP: FileProvider,
 {
-    inner: Arc<RwLock<VersionSetInner<S>>>,
+    inner: Arc<RwLock<VersionSetInner<S, FP>>>,
     clean_sender: Sender<CleanTag>,
-    wal_manager: Arc<WalManager<WP>>,
+    file_manager: Arc<FileManager<FP>>,
 }
 
-impl<S, WP> Clone for VersionSet<S, WP>
+impl<S, FP> Clone for VersionSet<S, FP>
 where
     S: Schema,
-    WP: WalProvider,
+    FP: FileProvider,
 {
     fn clone(&self) -> Self {
         VersionSet {
             inner: self.inner.clone(),
             clean_sender: self.clean_sender.clone(),
-            wal_manager: self.wal_manager.clone(),
+            file_manager: self.file_manager.clone(),
         }
     }
 }
 
-impl<S, WP> VersionSet<S, WP>
+impl<S, FP> VersionSet<S, FP>
 where
     S: Schema,
-    WP: WalProvider,
+    FP: FileProvider,
 {
     pub(crate) async fn new(
         option: &DbOption,
         clean_sender: Sender<CleanTag>,
-        wal_manager: Arc<WalManager<WP>>,
+        file_manager: Arc<FileManager<FP>>,
     ) -> Result<Self, VersionError<S>> {
         let mut log = fs::File::from(
             OpenOptions::new()
@@ -68,24 +69,25 @@ where
         let edits = VersionEdit::recover(&mut log).await;
         log.seek(SeekFrom::End(0)).await.map_err(VersionError::Io)?;
 
-        let set = VersionSet::<S, WP> {
+        let set = VersionSet::<S, FP> {
             inner: Arc::new(RwLock::new(VersionSetInner {
                 current: Arc::new(Version {
                     num: 0,
-                    level_slice: Version::<S>::level_slice_new(),
+                    level_slice: Version::<S, FP>::level_slice_new(),
                     clean_sender: clean_sender.clone(),
+                    file_manager: file_manager.clone(),
                 }),
                 log,
             })),
             clean_sender,
-            wal_manager,
+            file_manager,
         };
         set.apply_edits(edits, None, true).await?;
 
         Ok(set)
     }
-
-    pub(crate) async fn current(&self) -> VersionRef<S> {
+    
+    pub(crate) async fn current(&self) -> VersionRef<S, FP> {
         self.inner.read().await.current.clone()
     }
 
@@ -110,7 +112,7 @@ where
                 VersionEdit::Add { mut scope, level } => {
                     if let Some(wal_ids) = scope.wal_ids.take() {
                         for wal_id in wal_ids {
-                            self.wal_manager.remove_wal_file(wal_id).unwrap();
+                            self.file_manager.remove_wal_file(wal_id).unwrap();
                         }
                     }
                     new_version.level_slice[level as usize].push(scope);

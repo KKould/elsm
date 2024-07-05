@@ -18,7 +18,6 @@ use parquet::arrow::{
     ParquetRecordBatchStreamBuilder, ProjectionMask,
 };
 use thiserror::Error;
-use tokio::fs;
 use tracing::error;
 
 use crate::{
@@ -28,28 +27,32 @@ use crate::{
     stream::{level_stream::LevelStream, table_stream::TableStream, EStreamImpl, StreamError},
     version::cleaner::CleanTag,
     wal::FileId,
-    DbOption,
 };
+use crate::wal::provider::{FileType, FileProvider};
+use crate::wal::FileManager;
 
 pub const MAX_LEVEL: usize = 7;
 
-pub(crate) type VersionRef<S> = Arc<Version<S>>;
+pub(crate) type VersionRef<S, FP> = Arc<Version<S, FP>>;
 
-pub(crate) struct Version<S>
+pub(crate) struct Version<S, FP>
 where
     S: Schema,
+    FP: FileProvider,
 {
     pub(crate) num: usize,
     pub(crate) level_slice: [Vec<Scope<S::PrimaryKey>>; MAX_LEVEL],
     pub(crate) clean_sender: Sender<CleanTag>,
+    pub(crate) file_manager: Arc<FileManager<FP>>,
 }
 
-impl<S> Clone for Version<S>
+impl<S, FP> Clone for Version<S, FP>
 where
     S: Schema,
+    FP: FileProvider,
 {
     fn clone(&self) -> Self {
-        let mut level_slice = Version::<S>::level_slice_new();
+        let mut level_slice = Version::<S, FP>::level_slice_new();
 
         for (level, scopes) in self.level_slice.iter().enumerate() {
             for scope in scopes {
@@ -61,18 +64,19 @@ where
             num: self.num,
             level_slice,
             clean_sender: self.clean_sender.clone(),
+            file_manager: self.file_manager.clone(),
         }
     }
 }
 
-impl<S> Version<S>
+impl<S, FP> Version<S, FP>
 where
     S: Schema,
+    FP: FileProvider,
 {
     pub(crate) async fn query(
         &self,
         key: &S::PrimaryKey,
-        option: &DbOption,
     ) -> Result<Option<RecordBatch>, VersionError<S>> {
         let key_array = S::to_primary_key_array(vec![key.clone()]);
 
@@ -80,7 +84,7 @@ where
             if !scope.is_between(key) {
                 continue;
             }
-            if let Some(batch) = Self::read_parquet(&scope.gen, &key_array, option).await? {
+            if let Some(batch) = Self::read_parquet(scope.gen, &key_array, &self.file_manager).await? {
                 return Ok(Some(batch));
             }
         }
@@ -92,7 +96,7 @@ where
             if !level[index].is_between(key) {
                 continue;
             }
-            if let Some(batch) = Self::read_parquet(&level[index].gen, &key_array, option).await? {
+            if let Some(batch) = Self::read_parquet(level[index].gen, &key_array, &self.file_manager).await? {
                 return Ok(Some(batch));
             }
         }
@@ -124,14 +128,13 @@ where
 
     pub(crate) async fn iters<'a>(
         &self,
-        iters: &mut Vec<EStreamImpl<'a, S>>,
-        option: &'a DbOption,
+        iters: &mut Vec<EStreamImpl<'a, S, FP>>,
         lower: Option<&S::PrimaryKey>,
         upper: Option<&S::PrimaryKey>,
     ) -> Result<(), StreamError<S::PrimaryKey, S>> {
         for scope in self.level_slice[0].iter() {
             iters.push(EStreamImpl::Table(
-                TableStream::new(option, &scope.gen, lower, upper).await?,
+                TableStream::new(self.file_manager.clone(), scope.gen, lower, upper).await?,
             ))
         }
         for scopes in self.level_slice[1..].iter() {
@@ -140,18 +143,18 @@ where
             }
             let gens = scopes.iter().map(|scope| scope.gen).collect::<Vec<_>>();
             iters.push(EStreamImpl::Level(
-                LevelStream::new(option, gens, lower, upper).await?,
+                LevelStream::new(self.file_manager.clone(), gens, lower, upper).await?,
             ));
         }
         Ok(())
     }
 
     async fn read_parquet(
-        scope_gen: &FileId,
+        scope_gen: FileId,
         key_scalar: &S::PrimaryKeyArray,
-        option: &DbOption,
+        file_manager: &FileManager<FP>,
     ) -> Result<Option<RecordBatch>, VersionError<S>> {
-        let mut file = fs::File::open(option.table_path(scope_gen))
+        let mut file = file_manager.file_provider.open(scope_gen, FileType::PARQUET)
             .await
             .map_err(VersionError::Io)?;
         let meta = ArrowReaderMetadata::load_async(&mut file, Default::default())
@@ -177,9 +180,10 @@ where
     }
 }
 
-impl<S> Drop for Version<S>
+impl<S, FP> Drop for Version<S, FP>
 where
     S: Schema,
+    FP: FileProvider,
 {
     fn drop(&mut self) {
         block_on(async {

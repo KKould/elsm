@@ -3,11 +3,11 @@ use std::{
     pin::{pin, Pin},
     task::{Context, Poll},
 };
+use std::sync::Arc;
 
 use arrow::{
-    array::{GenericBinaryArray, GenericByteArray, Scalar},
+    array::Scalar,
     compute::kernels::cmp::{gt_eq, lt_eq},
-    datatypes::GenericBinaryType,
 };
 use futures::{Stream, StreamExt};
 use parquet::arrow::{
@@ -16,48 +16,50 @@ use parquet::arrow::{
     ParquetRecordBatchStreamBuilder, ProjectionMask,
 };
 use pin_project::pin_project;
-use tokio::fs;
 
 use crate::{
     schema::Schema,
-    serdes::Encode,
     stream::{batch_stream::BatchStream, StreamError},
     wal::FileId,
-    DbOption, Offset,
 };
+use crate::wal::provider::{FileType, FileProvider};
+use crate::wal::FileManager;
 
 #[pin_project]
-pub(crate) struct TableStream<'stream, S>
+pub(crate) struct TableStream<'stream, S, FP>
 where
     S: Schema,
+    FP: FileProvider,
 {
-    inner: ParquetRecordBatchStream<fs::File>,
+    inner: ParquetRecordBatchStream<FP::File>,
     stream: Option<BatchStream<S>>,
+    file_manager: Arc<FileManager<FP>>,
     _p: PhantomData<&'stream ()>,
 }
 
-impl<S> TableStream<'_, S>
+impl<'stream, S, FP> TableStream<'stream, S, FP>
 where
     S: Schema,
+    FP: FileProvider,
 {
     pub(crate) async fn new(
-        option: &DbOption,
-        gen: &FileId,
+        file_manager: Arc<FileManager<FP>>,
+        gen: FileId,
         lower: Option<&S::PrimaryKey>,
         upper: Option<&S::PrimaryKey>,
-    ) -> Result<Self, StreamError<S::PrimaryKey, S>> {
+    ) -> Result<TableStream<'stream, S, FP>, StreamError<S::PrimaryKey, S>> {
         let lower = if let Some(l) = lower {
-            Some(Self::to_scalar(l).await?)
+            Some(S::to_primary_key_array(vec![l.clone()]))
         } else {
             None
         };
         let upper = if let Some(u) = upper {
-            Some(Self::to_scalar(u).await?)
+            Some(S::to_primary_key_array(vec![u.clone()]))
         } else {
             None
         };
 
-        let mut file = fs::File::open(option.table_path(gen))
+        let mut file = file_manager.file_provider.open(gen, FileType::PARQUET)
             .await
             .map_err(StreamError::Io)?;
         let meta = ArrowReaderMetadata::load_async(&mut file, Default::default())
@@ -94,27 +96,16 @@ where
         Ok(TableStream {
             inner: reader,
             stream,
+            file_manager,
             _p: Default::default(),
         })
     }
-
-    async fn to_scalar(
-        key: &S::PrimaryKey,
-    ) -> Result<GenericByteArray<GenericBinaryType<Offset>>, StreamError<S::PrimaryKey, S>> {
-        let mut key_bytes = Vec::new();
-        key.encode(&mut key_bytes)
-            .await
-            .map_err(StreamError::KeyEncode)?;
-
-        Ok(GenericBinaryArray::<Offset>::from(vec![
-            key_bytes.as_slice()
-        ]))
-    }
 }
 
-impl<S> Stream for TableStream<'_, S>
+impl<S, FP> Stream for TableStream<'_, S, FP>
 where
     S: Schema,
+    FP: FileProvider,
 {
     type Item = Result<(S::PrimaryKey, Option<S>), StreamError<S::PrimaryKey, S>>;
 

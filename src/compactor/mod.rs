@@ -3,7 +3,6 @@ use std::{cmp, collections::VecDeque, fmt::Debug, mem, pin::pin, sync::Arc};
 use futures::{channel::oneshot, StreamExt};
 use parquet::arrow::AsyncArrowWriter;
 use thiserror::Error;
-use tokio::fs::File;
 use ulid::Ulid;
 
 use crate::{
@@ -16,34 +15,39 @@ use crate::{
         EStreamImpl, StreamError,
     },
     version::{edit::VersionEdit, set::VersionSet, Version, VersionError, MAX_LEVEL},
-    wal::{provider::WalProvider, FileId},
+    wal::{provider::FileProvider, FileId},
     DbOption, Immutable,
 };
+use crate::wal::provider::FileType;
+use crate::wal::FileManager;
 
-pub(crate) struct Compactor<S, WP>
+pub(crate) struct Compactor<S, FP>
 where
     S: Schema,
-    WP: WalProvider,
+    FP: FileProvider,
 {
     pub(crate) option: Arc<DbOption>,
     pub(crate) immutable: Immutable<S>,
-    pub(crate) version_set: VersionSet<S, WP>,
+    pub(crate) version_set: VersionSet<S, FP>,
+    file_manager: Arc<FileManager<FP>>,
 }
 
-impl<S, WP> Compactor<S, WP>
+impl<S, FP> Compactor<S, FP>
 where
     S: Schema,
-    WP: WalProvider,
+    FP: FileProvider,
 {
     pub(crate) fn new(
         immutable: Immutable<S>,
         option: Arc<DbOption>,
-        version_set: VersionSet<S, WP>,
+        version_set: VersionSet<S, FP>,
+        file_manager: Arc<FileManager<FP>>,
     ) -> Self {
-        Compactor::<S, WP> {
+        Compactor::<S, FP> {
             option,
             immutable,
             version_set,
+            file_manager,
         }
     }
 
@@ -57,7 +61,7 @@ where
             let excess = guard.split_off(self.option.immutable_chunk_num);
 
             if let Some(scope) =
-                Self::minor_compaction(&self.option, mem::replace(&mut guard, excess)).await?
+                Self::minor_compaction(&self.file_manager, mem::replace(&mut guard, excess)).await?
             {
                 let version_ref = self.version_set.current().await;
                 let mut version_edits = vec![];
@@ -67,6 +71,7 @@ where
                     Self::major_compaction(
                         &version_ref,
                         &self.option,
+                        &self.file_manager,
                         &scope.min,
                         &scope.max,
                         &mut version_edits,
@@ -89,7 +94,7 @@ where
     }
 
     pub(crate) async fn minor_compaction(
-        option: &DbOption,
+        file_manager: &FileManager<FP>,
         batches: VecDeque<(IndexBatch<S>, FileId)>,
     ) -> Result<Option<Scope<S::PrimaryKey>>, CompactionError<S>> {
         if !batches.is_empty() {
@@ -100,9 +105,7 @@ where
             let mut wal_ids = Vec::with_capacity(batches.len());
 
             let mut writer = AsyncArrowWriter::try_new(
-                File::create(option.table_path(&gen))
-                    .await
-                    .map_err(CompactionError::Io)?,
+                file_manager.file_provider.open(gen, FileType::PARQUET).await.map_err(CompactionError::Io)?,
                 S::inner_schema(),
                 None,
             )
@@ -135,8 +138,9 @@ where
     }
 
     pub(crate) async fn major_compaction(
-        version: &Version<S>,
+        version: &Version<S, FP>,
         option: &DbOption,
+        file_manager: &Arc<FileManager<FP>>,
         mut min: &S::PrimaryKey,
         mut max: &S::PrimaryKey,
         version_edits: &mut Vec<VersionEdit<S::PrimaryKey>>,
@@ -151,7 +155,7 @@ where
 
             let mut meet_scopes_l = Vec::new();
             {
-                let index = Version::<S>::scope_search(min, &version.level_slice[level]);
+                let index = Version::<S, FP>::scope_search(min, &version.level_slice[level]);
 
                 for scope in version.level_slice[level][index..].iter() {
                     if scope.is_between(min) || scope.is_between(max) {
@@ -174,9 +178,9 @@ where
                     max = max_key;
 
                     let min_index =
-                        Version::<S>::scope_search(min_key, &version.level_slice[level + 1]);
+                        Version::<S, FP>::scope_search(min_key, &version.level_slice[level + 1]);
                     let max_index =
-                        Version::<S>::scope_search(max_key, &version.level_slice[level + 1]);
+                        Version::<S, FP>::scope_search(max_key, &version.level_slice[level + 1]);
 
                     let next_level_len = version.level_slice[level + 1].len();
                     for scope in version.level_slice[level + 1]
@@ -195,7 +199,7 @@ where
             if level == 0 {
                 for scope in meet_scopes_l.iter() {
                     streams.push(EStreamImpl::Table(
-                        TableStream::new(option, &scope.gen, None, None)
+                        TableStream::new(file_manager.clone(), scope.gen, None, None)
                             .await
                             .map_err(CompactionError::Stream)?,
                     ));
@@ -206,7 +210,7 @@ where
                     .map(|scope| scope.gen)
                     .collect::<Vec<_>>();
                 streams.push(EStreamImpl::Level(
-                    LevelStream::new(option, gens, Some(min), Some(max))
+                    LevelStream::new(file_manager.clone(), gens, Some(min), Some(max))
                         .await
                         .map_err(CompactionError::Stream)?,
                 ));
@@ -217,11 +221,11 @@ where
                 .map(|scope| scope.gen)
                 .collect::<Vec<_>>();
             streams.push(EStreamImpl::Level(
-                LevelStream::new(option, gens, None, None)
+                LevelStream::new(file_manager.clone(), gens, None, None)
                     .await
                     .map_err(CompactionError::Stream)?,
             ));
-            let stream = MergeStream::<S>::new(streams)
+            let stream = MergeStream::<S, FP>::new(streams)
                 .await
                 .map_err(CompactionError::Stream)?;
 
@@ -243,7 +247,7 @@ where
 
                 if written_size >= option.max_sst_file_size {
                     Self::build_table(
-                        option,
+                        file_manager,
                         version_edits,
                         level,
                         &mut builder,
@@ -256,7 +260,7 @@ where
             }
             if written_size > 0 {
                 Self::build_table(
-                    option,
+                    file_manager,
                     version_edits,
                     level,
                     &mut builder,
@@ -286,7 +290,7 @@ where
     }
 
     async fn build_table(
-        option: &DbOption,
+        file_manager: &FileManager<FP>,
         version_edits: &mut Vec<VersionEdit<S::PrimaryKey>>,
         level: usize,
         builder: &mut S::Builder,
@@ -299,9 +303,7 @@ where
         let gen = Ulid::new();
         let batch = builder.finish();
         let mut writer = AsyncArrowWriter::try_new(
-            File::create(option.table_path(&gen))
-                .await
-                .map_err(CompactionError::Io)?,
+            file_manager.file_provider.open(gen, FileType::PARQUET).await.map_err(CompactionError::Io)?,
             S::inner_schema(),
             None,
         )
@@ -347,6 +349,7 @@ mod tests {
         collections::{BTreeMap, VecDeque},
         fs::File,
     };
+    use std::sync::Arc;
 
     use futures::channel::mpsc::channel;
     use parquet::arrow::ArrowWriter;
@@ -364,6 +367,8 @@ mod tests {
         wal::{provider::in_mem::InMemProvider, FileId},
         DbOption,
     };
+    use crate::wal::provider::fs::Fs;
+    use crate::wal::FileManager;
 
     async fn build_index_batch<S>(items: Vec<(S, bool)>) -> IndexBatch<S>
     where
@@ -407,9 +412,7 @@ mod tests {
 
     #[tokio::test]
     async fn minor_compaction() {
-        let temp_dir = TempDir::new().unwrap();
-
-        let option = DbOption::new(temp_dir.path().to_path_buf());
+        let manager = FileManager::new(InMemProvider::default());
 
         let batch_1 = build_index_batch::<UserInner>(vec![
             (
@@ -443,7 +446,7 @@ mod tests {
         .await;
 
         let scope = Compactor::<UserInner, InMemProvider>::minor_compaction(
-            &option,
+            &manager,
             VecDeque::from(vec![(batch_2, FileId::new()), (batch_1, FileId::new())]),
         )
         .await
@@ -459,6 +462,7 @@ mod tests {
 
         let mut option = DbOption::new(temp_dir.path().to_path_buf());
         option.major_threshold_with_sst_size = 2;
+        let manager = Arc::new(FileManager::new(Fs::new(temp_dir.path()).unwrap()));
 
         // level 1
         let table_gen_1 = FileId::new();
@@ -566,10 +570,11 @@ mod tests {
 
         let (sender, _) = channel(1);
 
-        let mut version = Version::<UserInner> {
+        let mut version = Version::<UserInner, Fs> {
             num: 0,
-            level_slice: Version::<UserInner>::level_slice_new(),
+            level_slice: Version::<UserInner, Fs>::level_slice_new(),
             clean_sender: sender,
+            file_manager: manager.clone(),
         };
         version.level_slice[0].push(Scope {
             min: 1,
@@ -606,9 +611,10 @@ mod tests {
         let max = 5;
         let mut version_edits = Vec::new();
 
-        Compactor::<UserInner, InMemProvider>::major_compaction(
+        Compactor::<UserInner, Fs>::major_compaction(
             &version,
             &option,
+            &manager,
             &min,
             &max,
             &mut version_edits,

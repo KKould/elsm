@@ -42,7 +42,7 @@ use tokio::{
 };
 use tracing::error;
 use transaction::Transaction;
-use wal::{provider::WalProvider, WalFile, WalManager, WalWrite, WriteError};
+use wal::{provider::FileProvider, WalFile, FileManager, WalWrite, WriteError};
 
 use crate::{
     compactor::Compactor,
@@ -75,49 +75,49 @@ pub struct DbOption {
 }
 
 #[derive(Debug)]
-struct MutableShard<S, WP>
+struct MutableShard<S, FP>
 where
     S: schema::Schema,
-    WP: WalProvider,
+    FP: FileProvider,
 {
     mutable: MemTable<S>,
-    wal: WalFile<WP::File, S::PrimaryKey, S>,
+    wal: WalFile<FP::File, S::PrimaryKey, S>,
 }
 
-pub struct Db<S, O, WP>
+pub struct Db<S, O, FP>
 where
     S: schema::Schema,
     O: Oracle<S::PrimaryKey>,
-    WP: WalProvider,
+    FP: FileProvider,
 {
     option: Arc<DbOption>,
     pub(crate) oracle: O,
-    wal_manager: Arc<WalManager<WP>>,
-    pub(crate) mutable_shards: RwLock<MutableShard<S, WP>>,
+    file_manager: Arc<FileManager<FP>>,
+    pub(crate) mutable_shards: RwLock<MutableShard<S, FP>>,
     pub(crate) immutable: Immutable<S>,
     pub(crate) compaction_tx: Mutex<Sender<CompactTask>>,
-    pub(crate) version_set: VersionSet<S, WP>,
+    pub(crate) version_set: VersionSet<S, FP>,
 }
 
-impl<S, O, WP> Db<S, O, WP>
+impl<S, O, FP> Db<S, O, FP>
 where
     S: schema::Schema,
     O: Oracle<S::PrimaryKey> + 'static,
-    WP: WalProvider,
-    WP::File: AsyncWrite + AsyncRead,
+    FP: FileProvider,
+    FP::File: AsyncWrite + AsyncRead,
     io::Error: From<<S as Decode>::Error>,
 {
     pub async fn new(
         oracle: O,
-        wal_provider: WP,
+        file_provider: FP,
         option: DbOption,
     ) -> Result<Self, WriteError<<Record<S::PrimaryKey, S> as Encode>::Error>> {
         fs::create_dir_all(&option.path).unwrap();
 
-        let wal_manager = Arc::new(WalManager::new(wal_provider));
+        let file_manager = Arc::new(FileManager::new(file_provider));
         let mutable_shards = RwLock::new(MutableShard {
             mutable: MemTable::default(),
-            wal: wal_manager.create_wal_file().await.unwrap(),
+            wal: file_manager.create_wal_file().await.unwrap(),
         });
 
         let immutable = Arc::new(RwLock::new(VecDeque::new()));
@@ -127,11 +127,11 @@ where
         let (mut cleaner, clean_sender) = Cleaner::new(option.clone());
 
         let version_set =
-            VersionSet::<S, WP>::new(&option, clean_sender.clone(), wal_manager.clone())
+            VersionSet::<S, FP>::new(&option, clean_sender.clone(), file_manager.clone())
                 .await
                 .map_err(|err| WriteError::Internal(Box::new(err)))?;
         let mut compactor =
-            Compactor::<S, WP>::new(immutable.clone(), option.clone(), version_set.clone());
+            Compactor::<S, FP>::new(immutable.clone(), option.clone(), version_set.clone(), file_manager.clone());
 
         spawn(async move {
             if let Err(err) = cleaner.listen().await {
@@ -156,17 +156,17 @@ where
         let mut db = Db {
             option,
             oracle,
-            wal_manager: wal_manager.clone(),
+            file_manager: file_manager.clone(),
             mutable_shards,
             immutable,
             compaction_tx: Mutex::new(task_tx),
             version_set,
         };
-        let mut file_stream = pin!(wal_manager.wal_provider.list().map_err(WriteError::Io)?);
+        let mut file_stream = pin!(file_manager.file_provider.wal_list().map_err(WriteError::Io)?);
 
         while let Some(file) = file_stream.next().await {
             let (file, file_id) = file.map_err(|err| WriteError::Internal(Box::new(err)))?;
-            let mut file = wal_manager
+            let mut file = file_manager
                 .pack_wal_file(file, file_id)
                 .await
                 .map_err(WriteError::Io)?;
@@ -179,15 +179,15 @@ where
     }
 }
 
-impl<S, O, WP> Db<S, O, WP>
+impl<S, O, FP> Db<S, O, FP>
 where
     S: schema::Schema,
     O: Oracle<S::PrimaryKey>,
-    WP: WalProvider,
-    WP::File: AsyncWrite,
+    FP: FileProvider,
+    FP::File: AsyncWrite,
     io::Error: From<<S as Decode>::Error>,
 {
-    pub fn new_txn(self: &Arc<Self>) -> Transaction<S, Self> {
+    pub fn new_txn(self: &Arc<Self>) -> Transaction<S, FP, Self> {
         Transaction::new(self.clone())
     }
 
@@ -219,7 +219,7 @@ where
         value: Option<S>,
         is_recover: bool,
     ) -> Result<(), WriteError<<Record<S::PrimaryKey, S> as Encode>::Error>> {
-        let wal_manager = self.wal_manager.clone();
+        let file_manager = self.file_manager.clone();
         let max_mem_table_size = self.option.max_mem_table_size;
 
         let freeze = {
@@ -236,7 +236,7 @@ where
             if guard.mutable.is_excess(max_mem_table_size) {
                 let file_id = guard.wal.file_id();
                 if !is_recover {
-                    let mut wal_file = wal_manager
+                    let mut wal_file = file_manager
                         .create_wal_file()
                         .await
                         .map_err(WriteError::Io)?;
@@ -295,7 +295,7 @@ where
         drop(guard);
 
         let guard = self.version_set.current().await;
-        if let Ok(Some(record_batch)) = guard.query(key, &self.option).await {
+        if let Ok(Some(record_batch)) = guard.query(key).await {
             return S::from_batch(&record_batch, 0).1;
         }
         drop(guard);
@@ -308,18 +308,18 @@ where
         lower: Option<&S::PrimaryKey>,
         upper: Option<&S::PrimaryKey>,
         ts: &TimeStamp,
-    ) -> Result<MergeStream<S>, StreamError<S::PrimaryKey, S>> {
+    ) -> Result<MergeStream<S, FP>, StreamError<S::PrimaryKey, S>> {
         let iters = self.inner_range(lower, upper, ts).await?;
 
         MergeStream::new(iters).await
     }
 
     pub(crate) async fn inner_range<'s>(
-        &'s self,
+        &self,
         lower: Option<&S::PrimaryKey>,
         upper: Option<&S::PrimaryKey>,
         ts: &TimeStamp,
-    ) -> Result<Vec<EStreamImpl<S>>, StreamError<S::PrimaryKey, S>> {
+    ) -> Result<Vec<EStreamImpl<S, FP>>, StreamError<S::PrimaryKey, S>> {
         let guard = self.mutable_shards.read().await;
         let mut mem_table_stream = guard.mutable.range(lower, upper, ts).await?;
         let mut items = vec![];
@@ -349,7 +349,7 @@ where
         self.version_set
             .current()
             .await
-            .iters(&mut iters, &self.option, lower, upper)
+            .iters(&mut iters, lower, upper)
             .await?;
 
         Ok(iters)
@@ -415,11 +415,11 @@ where
     }
 }
 
-impl<S, O, WP> Oracle<S::PrimaryKey> for Db<S, O, WP>
+impl<S, O, FP> Oracle<S::PrimaryKey> for Db<S, O, FP>
 where
     S: schema::Schema,
     O: Oracle<S::PrimaryKey>,
-    WP: WalProvider,
+    FP: FileProvider,
 {
     fn start_read(&self) -> TimeStamp {
         self.oracle.start_read()
@@ -443,9 +443,10 @@ where
     }
 }
 
-pub trait GetWrite<S>: Oracle<S::PrimaryKey>
+pub trait GetWrite<S, FP>: Oracle<S::PrimaryKey>
 where
     S: schema::Schema,
+    FP: FileProvider,
 {
     fn get(&self, key: &S::PrimaryKey, ts: &TimeStamp) -> impl Future<Output = Option<S>>
     where
@@ -475,19 +476,19 @@ where
         lower: Option<&S::PrimaryKey>,
         upper: Option<&S::PrimaryKey>,
         ts: &TimeStamp,
-    ) -> impl Future<Output = Result<Vec<EStreamImpl<'a, S>>, StreamError<S::PrimaryKey, S>>>
+    ) -> impl Future<Output = Result<Vec<EStreamImpl<'a, S, FP>>, StreamError<S::PrimaryKey, S>>>
     where
         S::PrimaryKey: 'a,
         TimeStamp: 'a,
         S: 'a;
 }
 
-impl<S, O, WP> GetWrite<S> for Db<S, O, WP>
+impl<S, O, FP> GetWrite<S, FP> for Db<S, O, FP>
 where
     S: schema::Schema,
     O: Oracle<S::PrimaryKey>,
-    WP: WalProvider,
-    WP::File: AsyncWrite,
+    FP: FileProvider,
+    FP::File: AsyncWrite,
     io::Error: From<<S as Decode>::Error>,
 {
     async fn write(
@@ -527,7 +528,7 @@ where
         lower: Option<&S::PrimaryKey>,
         upper: Option<&S::PrimaryKey>,
         ts: &TimeStamp,
-    ) -> Result<Vec<EStreamImpl<'a, S>>, StreamError<S::PrimaryKey, S>>
+    ) -> Result<Vec<EStreamImpl<'a, S, FP>>, StreamError<S::PrimaryKey, S>>
     where
         S::PrimaryKey: 'a,
         TimeStamp: 'a,
@@ -557,9 +558,10 @@ impl DbOption {
         self.path.join("version.log")
     }
 
-    pub(crate) fn is_threshold_exceeded_major<S>(&self, version: &Version<S>, level: usize) -> bool
+    pub(crate) fn is_threshold_exceeded_major<S, FP>(&self, version: &Version<S, FP>, level: usize) -> bool
     where
         S: schema::Schema,
+        FP: FileProvider,
     {
         version.tables_len(level)
             >= (self.major_threshold_with_sst_size * self.level_sst_magnification.pow(level as u32))
@@ -749,7 +751,7 @@ mod tests {
         );
         txn.commit().await.unwrap();
 
-        let mut iter: MergeStream<UserInner> = db.range(Some(&1), Some(&2), &1).await.unwrap();
+        let mut iter: MergeStream<UserInner, InMemProvider> = db.range(Some(&1), Some(&2), &1).await.unwrap();
 
         assert_eq!(
             iter.next().await.unwrap().unwrap(),
@@ -1046,7 +1048,7 @@ mod tests {
             ))
         );
 
-        let mut stream: MergeStream<UserInner> = db.range(None, None, &0).await.unwrap();
+        let mut stream: MergeStream<UserInner, Fs> = db.range(None, None, &0).await.unwrap();
 
         let mut results = vec![];
         while let Some(result) = stream.next().await {
@@ -1091,7 +1093,7 @@ mod tests {
                 0
             ))
         );
-        let mut stream: MergeStream<UserInner> = db.range(None, None, &0).await.unwrap();
+        let mut stream: MergeStream<UserInner, Fs> = db.range(None, None, &0).await.unwrap();
 
         let mut results = vec![];
         while let Some(result) = stream.next().await {
