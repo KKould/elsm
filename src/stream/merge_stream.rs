@@ -12,8 +12,8 @@ use crate::{
     schema::Schema,
     stream::{EStreamImpl, StreamError},
     utils::CmpKeyItem,
+    wal::provider::FileProvider,
 };
-use crate::wal::provider::FileProvider;
 
 #[pin_project]
 pub struct MergeStream<'stream, S, FP>
@@ -104,8 +104,8 @@ mod tests {
     use crate::{
         stream::{buf_stream::BufStream, merge_stream::MergeStream, EStreamImpl},
         tests::UserInner,
+        wal::provider::in_mem::InMemProvider,
     };
-    use crate::wal::provider::in_mem::InMemProvider;
 
     #[test]
     fn iter() {

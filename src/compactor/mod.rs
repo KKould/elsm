@@ -15,11 +15,12 @@ use crate::{
         EStreamImpl, StreamError,
     },
     version::{edit::VersionEdit, set::VersionSet, Version, VersionError, MAX_LEVEL},
-    wal::{provider::FileProvider, FileId},
+    wal::{
+        provider::{FileProvider, FileType},
+        FileId, FileManager,
+    },
     DbOption, Immutable,
 };
-use crate::wal::provider::FileType;
-use crate::wal::FileManager;
 
 pub(crate) struct Compactor<S, FP>
 where
@@ -105,7 +106,11 @@ where
             let mut wal_ids = Vec::with_capacity(batches.len());
 
             let mut writer = AsyncArrowWriter::try_new(
-                file_manager.file_provider.open(gen, FileType::PARQUET).await.map_err(CompactionError::Io)?,
+                file_manager
+                    .file_provider
+                    .open(gen, FileType::PARQUET)
+                    .await
+                    .map_err(CompactionError::Io)?,
                 S::inner_schema(),
                 None,
             )
@@ -303,7 +308,11 @@ where
         let gen = Ulid::new();
         let batch = builder.finish();
         let mut writer = AsyncArrowWriter::try_new(
-            file_manager.file_provider.open(gen, FileType::PARQUET).await.map_err(CompactionError::Io)?,
+            file_manager
+                .file_provider
+                .open(gen, FileType::PARQUET)
+                .await
+                .map_err(CompactionError::Io)?,
             S::inner_schema(),
             None,
         )
@@ -348,8 +357,8 @@ mod tests {
     use std::{
         collections::{BTreeMap, VecDeque},
         fs::File,
+        sync::Arc,
     };
-    use std::sync::Arc;
 
     use futures::channel::mpsc::channel;
     use parquet::arrow::ArrowWriter;
@@ -364,11 +373,12 @@ mod tests {
         scope::Scope,
         tests::UserInner,
         version::{edit::VersionEdit, Version},
-        wal::{provider::in_mem::InMemProvider, FileId},
+        wal::{
+            provider::{fs::Fs, in_mem::InMemProvider},
+            FileId, FileManager,
+        },
         DbOption,
     };
-    use crate::wal::provider::fs::Fs;
-    use crate::wal::FileManager;
 
     async fn build_index_batch<S>(items: Vec<(S, bool)>) -> IndexBatch<S>
     where

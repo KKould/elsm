@@ -1,9 +1,9 @@
 use std::{
     collections::VecDeque,
     pin::{pin, Pin},
+    sync::Arc,
     task::{Context, Poll},
 };
-use std::sync::Arc;
 
 use futures::{Future, Stream};
 use pin_project::pin_project;
@@ -11,15 +11,16 @@ use pin_project::pin_project;
 use crate::{
     schema::Schema,
     stream::{table_stream::TableStream, StreamError},
-    wal::FileId,
+    wal::{provider::FileProvider, FileId, FileManager},
 };
-use crate::wal::provider::FileProvider;
-use crate::wal::FileManager;
 
 type LevelStreamFuture<'stream, S, FP> = Pin<
     Box<
         dyn Future<
-                Output = Result<TableStream<'stream, S, FP>, StreamError<<S as Schema>::PrimaryKey, S>>,
+                Output = Result<
+                    TableStream<'stream, S, FP>,
+                    StreamError<<S as Schema>::PrimaryKey, S>,
+                >,
             > + Send
             + 'stream,
     >,
@@ -54,7 +55,8 @@ where
         let mut stream = None;
 
         if let Some(gen) = gens.pop_front() {
-            stream = Some(TableStream::<S,FP>::new(file_manager.clone(), gen, lower, upper).await?);
+            stream =
+                Some(TableStream::<S, FP>::new(file_manager.clone(), gen, lower, upper).await?);
         }
 
         Ok(Self {
@@ -99,7 +101,8 @@ where
                         let max = self.upper.clone();
 
                         let mut future = Box::pin(async move {
-                            TableStream::<S, FP>::new(file_manager, gen, min.as_ref(), max.as_ref()).await
+                            TableStream::<S, FP>::new(file_manager, gen, min.as_ref(), max.as_ref())
+                                .await
                         });
 
                         match future.as_mut().poll(cx) {

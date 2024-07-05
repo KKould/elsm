@@ -12,7 +12,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use tokio::fs::File;
 
-use super::{FileType, FileProvider};
+use super::{FileProvider, FileType};
 use crate::wal::FileId;
 
 static WAL_REGEX: Lazy<Regex> =

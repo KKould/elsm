@@ -1,11 +1,10 @@
 use std::{
     io,
-    io::{Cursor, Error},
+    io::{Cursor, Error, SeekFrom},
     pin::{pin, Pin},
     sync::Arc,
     task::{Context, Poll},
 };
-use std::io::SeekFrom;
 
 use async_stream::stream;
 use crossbeam_queue::SegQueue;
@@ -13,7 +12,7 @@ use futures::{ready, Stream};
 use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite, ReadBuf};
 use ulid::Ulid;
 
-use super::{FileType, FileProvider};
+use super::{FileProvider, FileType};
 use crate::wal::FileId;
 
 #[derive(Debug, Default, Clone)]

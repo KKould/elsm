@@ -16,9 +16,9 @@ use crate::{
     oracle::{TimeStamp, WriteConflict},
     schema::Schema,
     stream::{merge_stream::MergeStream, EStreamImpl, StreamError},
+    wal::provider::FileProvider,
     GetWrite,
 };
-use crate::wal::provider::FileProvider;
 
 #[derive(Debug)]
 pub struct Transaction<S, FP, DB>
@@ -30,7 +30,7 @@ where
     pub(crate) read_at: TimeStamp,
     pub(crate) local: BTreeMap<S::PrimaryKey, Option<S>>,
     share: Arc<DB>,
-    _p: PhantomData<FP>
+    _p: PhantomData<FP>,
 }
 
 impl<S, FP, DB> Transaction<S, FP, DB>

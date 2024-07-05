@@ -15,8 +15,8 @@ use crate::{
     serdes::{Decode, Encode},
     stream::{buf_stream::BufStream, level_stream::LevelStream, table_stream::TableStream},
     transaction::TransactionStream,
+    wal::provider::FileProvider,
 };
-use crate::wal::provider::FileProvider;
 
 pub(crate) mod batch_stream;
 pub(crate) mod buf_stream;

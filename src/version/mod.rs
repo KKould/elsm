@@ -26,10 +26,11 @@ use crate::{
     serdes::Encode,
     stream::{level_stream::LevelStream, table_stream::TableStream, EStreamImpl, StreamError},
     version::cleaner::CleanTag,
-    wal::FileId,
+    wal::{
+        provider::{FileProvider, FileType},
+        FileId, FileManager,
+    },
 };
-use crate::wal::provider::{FileType, FileProvider};
-use crate::wal::FileManager;
 
 pub const MAX_LEVEL: usize = 7;
 
@@ -84,7 +85,9 @@ where
             if !scope.is_between(key) {
                 continue;
             }
-            if let Some(batch) = Self::read_parquet(scope.gen, &key_array, &self.file_manager).await? {
+            if let Some(batch) =
+                Self::read_parquet(scope.gen, &key_array, &self.file_manager).await?
+            {
                 return Ok(Some(batch));
             }
         }
@@ -96,7 +99,9 @@ where
             if !level[index].is_between(key) {
                 continue;
             }
-            if let Some(batch) = Self::read_parquet(level[index].gen, &key_array, &self.file_manager).await? {
+            if let Some(batch) =
+                Self::read_parquet(level[index].gen, &key_array, &self.file_manager).await?
+            {
                 return Ok(Some(batch));
             }
         }
@@ -154,7 +159,9 @@ where
         key_scalar: &S::PrimaryKeyArray,
         file_manager: &FileManager<FP>,
     ) -> Result<Option<RecordBatch>, VersionError<S>> {
-        let mut file = file_manager.file_provider.open(scope_gen, FileType::PARQUET)
+        let mut file = file_manager
+            .file_provider
+            .open(scope_gen, FileType::PARQUET)
             .await
             .map_err(VersionError::Io)?;
         let meta = ArrowReaderMetadata::load_async(&mut file, Default::default())

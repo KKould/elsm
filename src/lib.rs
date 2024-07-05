@@ -42,7 +42,7 @@ use tokio::{
 };
 use tracing::error;
 use transaction::Transaction;
-use wal::{provider::FileProvider, WalFile, FileManager, WalWrite, WriteError};
+use wal::{provider::FileProvider, FileManager, WalFile, WalWrite, WriteError};
 
 use crate::{
     compactor::Compactor,
@@ -130,8 +130,12 @@ where
             VersionSet::<S, FP>::new(&option, clean_sender.clone(), file_manager.clone())
                 .await
                 .map_err(|err| WriteError::Internal(Box::new(err)))?;
-        let mut compactor =
-            Compactor::<S, FP>::new(immutable.clone(), option.clone(), version_set.clone(), file_manager.clone());
+        let mut compactor = Compactor::<S, FP>::new(
+            immutable.clone(),
+            option.clone(),
+            version_set.clone(),
+            file_manager.clone(),
+        );
 
         spawn(async move {
             if let Err(err) = cleaner.listen().await {
@@ -162,7 +166,10 @@ where
             compaction_tx: Mutex::new(task_tx),
             version_set,
         };
-        let mut file_stream = pin!(file_manager.file_provider.wal_list().map_err(WriteError::Io)?);
+        let mut file_stream = pin!(file_manager
+            .file_provider
+            .wal_list()
+            .map_err(WriteError::Io)?);
 
         while let Some(file) = file_stream.next().await {
             let (file, file_id) = file.map_err(|err| WriteError::Internal(Box::new(err)))?;
@@ -558,7 +565,11 @@ impl DbOption {
         self.path.join("version.log")
     }
 
-    pub(crate) fn is_threshold_exceeded_major<S, FP>(&self, version: &Version<S, FP>, level: usize) -> bool
+    pub(crate) fn is_threshold_exceeded_major<S, FP>(
+        &self,
+        version: &Version<S, FP>,
+        level: usize,
+    ) -> bool
     where
         S: schema::Schema,
         FP: FileProvider,
@@ -751,7 +762,8 @@ mod tests {
         );
         txn.commit().await.unwrap();
 
-        let mut iter: MergeStream<UserInner, InMemProvider> = db.range(Some(&1), Some(&2), &1).await.unwrap();
+        let mut iter: MergeStream<UserInner, InMemProvider> =
+            db.range(Some(&1), Some(&2), &1).await.unwrap();
 
         assert_eq!(
             iter.next().await.unwrap().unwrap(),

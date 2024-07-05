@@ -14,8 +14,8 @@ use self::provider::FileProvider;
 use crate::{
     record::Record,
     serdes::{Decode, Encode},
+    wal::provider::FileType,
 };
-use crate::wal::provider::FileType;
 
 pub(crate) type FileId = Ulid;
 

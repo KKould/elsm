@@ -1,9 +1,9 @@
 use std::{
     marker::PhantomData,
     pin::{pin, Pin},
+    sync::Arc,
     task::{Context, Poll},
 };
-use std::sync::Arc;
 
 use arrow::{
     array::Scalar,
@@ -20,10 +20,11 @@ use pin_project::pin_project;
 use crate::{
     schema::Schema,
     stream::{batch_stream::BatchStream, StreamError},
-    wal::FileId,
+    wal::{
+        provider::{FileProvider, FileType},
+        FileId, FileManager,
+    },
 };
-use crate::wal::provider::{FileType, FileProvider};
-use crate::wal::FileManager;
 
 #[pin_project]
 pub(crate) struct TableStream<'stream, S, FP>
@@ -59,7 +60,9 @@ where
             None
         };
 
-        let mut file = file_manager.file_provider.open(gen, FileType::PARQUET)
+        let mut file = file_manager
+            .file_provider
+            .open(gen, FileType::PARQUET)
             .await
             .map_err(StreamError::Io)?;
         let meta = ArrowReaderMetadata::load_async(&mut file, Default::default())

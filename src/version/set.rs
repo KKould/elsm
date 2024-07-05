@@ -86,7 +86,7 @@ where
 
         Ok(set)
     }
-    
+
     pub(crate) async fn current(&self) -> VersionRef<S, FP> {
         self.inner.read().await.current.clone()
     }
