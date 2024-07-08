@@ -62,9 +62,12 @@ where
         if guard.len() > self.option.immutable_chunk_num {
             let excess = guard.split_off(self.option.immutable_chunk_num);
 
-            if let Some(scope) =
-                Self::minor_compaction(&self.file_provider, mem::replace(&mut guard, excess))
-                    .await?
+            if let Some(scope) = Self::minor_compaction(
+                &self.option,
+                &self.file_provider,
+                mem::replace(&mut guard, excess),
+            )
+            .await?
             {
                 let version_ref = self.version_set.current().await;
                 let mut version_edits = vec![];
@@ -97,6 +100,7 @@ where
     }
 
     pub(crate) async fn minor_compaction(
+        option: &DbOption,
         file_provider: &FP,
         batches: VecDeque<(IndexBatch<S>, FileId)>,
     ) -> Result<Option<Scope<S::PrimaryKey>>, CompactionError<S>> {
@@ -114,7 +118,7 @@ where
                     .map_err(CompactionError::Io)?
                     .compat(),
                 S::inner_schema(),
-                None,
+                option.write_parquet_option.clone(),
             )
             .map_err(CompactionError::Parquet)?;
 
@@ -254,6 +258,7 @@ where
 
                 if written_size >= option.max_sst_file_size {
                     Self::build_table(
+                        option,
                         file_manager,
                         version_edits,
                         level,
@@ -267,6 +272,7 @@ where
             }
             if written_size > 0 {
                 Self::build_table(
+                    option,
                     file_manager,
                     version_edits,
                     level,
@@ -297,6 +303,7 @@ where
     }
 
     async fn build_table(
+        option: &DbOption,
         file_provider: &FP,
         version_edits: &mut Vec<VersionEdit<S::PrimaryKey>>,
         level: usize,
@@ -316,7 +323,7 @@ where
                 .map_err(CompactionError::Io)?
                 .compat(),
             S::inner_schema(),
-            None,
+            option.write_parquet_option.clone(),
         )
         .map_err(CompactionError::Parquet)?;
         writer
@@ -458,6 +465,7 @@ mod tests {
         .await;
 
         let scope = Compactor::<UserInner, InMemProvider>::minor_compaction(
+            &DbOption::new("/empty"),
             &provider,
             VecDeque::from(vec![(batch_2, FileId::new()), (batch_1, FileId::new())]),
         )

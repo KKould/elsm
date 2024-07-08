@@ -1,3 +1,4 @@
+mod builder;
 mod compactor;
 pub(crate) mod index_batch;
 pub(crate) mod mem_table;
@@ -35,6 +36,7 @@ use futures::{
 };
 use mem_table::MemTable;
 use oracle::Oracle;
+use parquet::file::properties::WriterProperties;
 use record::{Record, RecordType};
 use serdes::Encode;
 use tokio::spawn;
@@ -71,6 +73,7 @@ pub struct DbOption {
     pub level_sst_magnification: usize,
     pub max_sst_file_size: usize,
     pub clean_channel_buffer: usize,
+    pub write_parquet_option: Option<WriterProperties>,
 }
 
 #[derive(Debug)]
@@ -556,6 +559,7 @@ impl DbOption {
             level_sst_magnification: 10,
             max_sst_file_size: 24 * 1024 * 1024,
             clean_channel_buffer: 10,
+            write_parquet_option: None,
         }
     }
 
@@ -1030,6 +1034,7 @@ mod tests {
                     level_sst_magnification: 10,
                     max_sst_file_size: 2 * 1024 * 1024,
                     clean_channel_buffer: 10,
+                    write_parquet_option: None,
                 },
             )
             .await
@@ -1084,6 +1089,7 @@ mod tests {
                 level_sst_magnification: 10,
                 max_sst_file_size: 2 * 1024 * 1024,
                 clean_channel_buffer: 10,
+                write_parquet_option: None,
             },
         )
         .await
