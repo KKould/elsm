@@ -17,7 +17,7 @@ use crate::{
     version::{edit::VersionEdit, set::VersionSet, Version, VersionError, MAX_LEVEL},
     wal::{
         provider::{FileProvider, FileType},
-        FileId, FileManager,
+        FileId,
     },
     DbOption, Immutable,
 };
@@ -30,7 +30,7 @@ where
     pub(crate) option: Arc<DbOption>,
     pub(crate) immutable: Immutable<S>,
     pub(crate) version_set: VersionSet<S, FP>,
-    file_manager: Arc<FileManager<FP>>,
+    file_provider: Arc<FP>,
 }
 
 impl<S, FP> Compactor<S, FP>
@@ -42,13 +42,13 @@ where
         immutable: Immutable<S>,
         option: Arc<DbOption>,
         version_set: VersionSet<S, FP>,
-        file_manager: Arc<FileManager<FP>>,
+        file_provider: Arc<FP>,
     ) -> Self {
         Compactor::<S, FP> {
             option,
             immutable,
             version_set,
-            file_manager,
+            file_provider,
         }
     }
 
@@ -62,7 +62,8 @@ where
             let excess = guard.split_off(self.option.immutable_chunk_num);
 
             if let Some(scope) =
-                Self::minor_compaction(&self.file_manager, mem::replace(&mut guard, excess)).await?
+                Self::minor_compaction(&self.file_provider, mem::replace(&mut guard, excess))
+                    .await?
             {
                 let version_ref = self.version_set.current().await;
                 let mut version_edits = vec![];
@@ -72,7 +73,7 @@ where
                     Self::major_compaction(
                         &version_ref,
                         &self.option,
-                        &self.file_manager,
+                        &self.file_provider,
                         &scope.min,
                         &scope.max,
                         &mut version_edits,
@@ -95,7 +96,7 @@ where
     }
 
     pub(crate) async fn minor_compaction(
-        file_manager: &FileManager<FP>,
+        file_provider: &FP,
         batches: VecDeque<(IndexBatch<S>, FileId)>,
     ) -> Result<Option<Scope<S::PrimaryKey>>, CompactionError<S>> {
         if !batches.is_empty() {
@@ -106,8 +107,7 @@ where
             let mut wal_ids = Vec::with_capacity(batches.len());
 
             let mut writer = AsyncArrowWriter::try_new(
-                file_manager
-                    .file_provider
+                file_provider
                     .open(gen, FileType::PARQUET)
                     .await
                     .map_err(CompactionError::Io)?,
@@ -145,7 +145,7 @@ where
     pub(crate) async fn major_compaction(
         version: &Version<S, FP>,
         option: &DbOption,
-        file_manager: &Arc<FileManager<FP>>,
+        file_manager: &Arc<FP>,
         mut min: &S::PrimaryKey,
         mut max: &S::PrimaryKey,
         version_edits: &mut Vec<VersionEdit<S::PrimaryKey>>,
@@ -295,7 +295,7 @@ where
     }
 
     async fn build_table(
-        file_manager: &FileManager<FP>,
+        file_provider: &FP,
         version_edits: &mut Vec<VersionEdit<S::PrimaryKey>>,
         level: usize,
         builder: &mut S::Builder,
@@ -308,8 +308,7 @@ where
         let gen = Ulid::new();
         let batch = builder.finish();
         let mut writer = AsyncArrowWriter::try_new(
-            file_manager
-                .file_provider
+            file_provider
                 .open(gen, FileType::PARQUET)
                 .await
                 .map_err(CompactionError::Io)?,
@@ -375,7 +374,7 @@ mod tests {
         version::{edit::VersionEdit, Version},
         wal::{
             provider::{fs::Fs, in_mem::InMemProvider},
-            FileId, FileManager,
+            FileId,
         },
         DbOption,
     };
@@ -422,7 +421,7 @@ mod tests {
 
     #[tokio::test]
     async fn minor_compaction() {
-        let manager = FileManager::new(InMemProvider::default());
+        let provider = InMemProvider::default();
 
         let batch_1 = build_index_batch::<UserInner>(vec![
             (
@@ -456,7 +455,7 @@ mod tests {
         .await;
 
         let scope = Compactor::<UserInner, InMemProvider>::minor_compaction(
-            &manager,
+            &provider,
             VecDeque::from(vec![(batch_2, FileId::new()), (batch_1, FileId::new())]),
         )
         .await
@@ -472,7 +471,7 @@ mod tests {
 
         let mut option = DbOption::new(temp_dir.path().to_path_buf());
         option.major_threshold_with_sst_size = 2;
-        let manager = Arc::new(FileManager::new(Fs::new(temp_dir.path()).unwrap()));
+        let manager = Arc::new(Fs::new(temp_dir.path()).unwrap());
 
         // level 1
         let table_gen_1 = FileId::new();

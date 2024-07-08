@@ -42,7 +42,8 @@ use tokio::{
 };
 use tracing::error;
 use transaction::Transaction;
-use wal::{provider::FileProvider, FileManager, WalFile, WalWrite, WriteError};
+use ulid::Ulid;
+use wal::{provider::FileProvider, WalFile, WalWrite, WriteError};
 
 use crate::{
     compactor::Compactor,
@@ -52,7 +53,7 @@ use crate::{
     serdes::Decode,
     stream::{buf_stream::BufStream, merge_stream::MergeStream, EStreamImpl, StreamError},
     version::{cleaner::Cleaner, set::VersionSet, Version},
-    wal::{FileId, WalRecover},
+    wal::{provider::FileType, FileId, WalRecover},
 };
 
 pub type Offset = i64;
@@ -92,7 +93,7 @@ where
 {
     option: Arc<DbOption>,
     pub(crate) oracle: O,
-    file_manager: Arc<FileManager<FP>>,
+    file_provider: Arc<FP>,
     pub(crate) mutable_shards: RwLock<MutableShard<S, FP>>,
     pub(crate) immutable: Immutable<S>,
     pub(crate) compaction_tx: Mutex<Sender<CompactTask>>,
@@ -114,10 +115,17 @@ where
     ) -> Result<Self, WriteError<<Record<S::PrimaryKey, S> as Encode>::Error>> {
         fs::create_dir_all(&option.path).unwrap();
 
-        let file_manager = Arc::new(FileManager::new(file_provider));
+        let file_provider = Arc::new(file_provider);
+        let file_id = Ulid::new();
         let mutable_shards = RwLock::new(MutableShard {
             mutable: MemTable::default(),
-            wal: file_manager.create_wal_file().await.unwrap(),
+            wal: WalFile::new(
+                file_provider
+                    .open(file_id, FileType::WAL)
+                    .await
+                    .map_err(WriteError::Io)?,
+                file_id,
+            ),
         });
 
         let immutable = Arc::new(RwLock::new(VecDeque::new()));
@@ -127,14 +135,14 @@ where
         let (mut cleaner, clean_sender) = Cleaner::new(option.clone());
 
         let version_set =
-            VersionSet::<S, FP>::new(&option, clean_sender.clone(), file_manager.clone())
+            VersionSet::<S, FP>::new(&option, clean_sender.clone(), file_provider.clone())
                 .await
                 .map_err(|err| WriteError::Internal(Box::new(err)))?;
         let mut compactor = Compactor::<S, FP>::new(
             immutable.clone(),
             option.clone(),
             version_set.clone(),
-            file_manager.clone(),
+            file_provider.clone(),
         );
 
         spawn(async move {
@@ -160,24 +168,17 @@ where
         let mut db = Db {
             option,
             oracle,
-            file_manager: file_manager.clone(),
+            file_provider: file_provider.clone(),
             mutable_shards,
             immutable,
             compaction_tx: Mutex::new(task_tx),
             version_set,
         };
-        let mut file_stream = pin!(file_manager
-            .file_provider
-            .wal_list()
-            .map_err(WriteError::Io)?);
+        let mut file_stream = pin!(file_provider.wal_list().map_err(WriteError::Io)?);
 
         while let Some(file) = file_stream.next().await {
             let (file, file_id) = file.map_err(|err| WriteError::Internal(Box::new(err)))?;
-            let mut file = file_manager
-                .pack_wal_file(file, file_id)
-                .await
-                .map_err(WriteError::Io)?;
-            db.recover(&mut file)
+            db.recover(&mut WalFile::new(file, file_id))
                 .await
                 .map_err(|err| WriteError::Internal(Box::new(err)))?;
         }
@@ -226,7 +227,6 @@ where
         value: Option<S>,
         is_recover: bool,
     ) -> Result<(), WriteError<<Record<S::PrimaryKey, S> as Encode>::Error>> {
-        let file_manager = self.file_manager.clone();
         let max_mem_table_size = self.option.max_mem_table_size;
 
         let freeze = {
@@ -243,10 +243,14 @@ where
             if guard.mutable.is_excess(max_mem_table_size) {
                 let file_id = guard.wal.file_id();
                 if !is_recover {
-                    let mut wal_file = file_manager
-                        .create_wal_file()
+                    let file_id = Ulid::new();
+                    let file = self
+                        .file_provider
+                        .open(file_id, FileType::WAL)
                         .await
                         .map_err(WriteError::Io)?;
+                    let mut wal_file = WalFile::new(file, file_id);
+
                     mem::swap(&mut guard.wal, &mut wal_file);
                 }
                 let mut mem_table = MemTable::default();

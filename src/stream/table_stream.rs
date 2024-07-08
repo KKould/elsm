@@ -22,7 +22,7 @@ use crate::{
     stream::{batch_stream::BatchStream, StreamError},
     wal::{
         provider::{FileProvider, FileType},
-        FileId, FileManager,
+        FileId,
     },
 };
 
@@ -34,7 +34,7 @@ where
 {
     inner: ParquetRecordBatchStream<FP::File>,
     stream: Option<BatchStream<S>>,
-    file_manager: Arc<FileManager<FP>>,
+    file_provider: Arc<FP>,
     _p: PhantomData<&'stream ()>,
 }
 
@@ -44,24 +44,15 @@ where
     FP: FileProvider,
 {
     pub(crate) async fn new(
-        file_manager: Arc<FileManager<FP>>,
+        file_provider: Arc<FP>,
         gen: FileId,
         lower: Option<&S::PrimaryKey>,
         upper: Option<&S::PrimaryKey>,
     ) -> Result<TableStream<'stream, S, FP>, StreamError<S::PrimaryKey, S>> {
-        let lower = if let Some(l) = lower {
-            Some(S::to_primary_key_array(vec![l.clone()]))
-        } else {
-            None
-        };
-        let upper = if let Some(u) = upper {
-            Some(S::to_primary_key_array(vec![u.clone()]))
-        } else {
-            None
-        };
+        let lower = lower.map(|u| S::to_primary_key_array(vec![u.clone()]));
+        let upper = upper.map(|u| S::to_primary_key_array(vec![u.clone()]));
 
-        let mut file = file_manager
-            .file_provider
+        let mut file = file_provider
             .open(gen, FileType::PARQUET)
             .await
             .map_err(StreamError::Io)?;
@@ -99,7 +90,7 @@ where
         Ok(TableStream {
             inner: reader,
             stream,
-            file_manager,
+            file_provider,
             _p: Default::default(),
         })
     }

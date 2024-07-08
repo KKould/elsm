@@ -43,8 +43,8 @@ impl FileProvider for Fs {
             .into())
     }
 
-    fn remove(&self, fid: FileId) -> io::Result<()> {
-        let _ = fs::remove_file(self.path.join(format!("{}.wal", fid)));
+    fn remove(&self, fid: FileId, file_type: FileType) -> io::Result<()> {
+        let _ = fs::remove_file(self.path.join(format!("{}.{}", fid, file_type)));
         Ok(())
     }
 

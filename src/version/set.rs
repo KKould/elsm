@@ -11,7 +11,10 @@ use crate::{
     schema::Schema,
     serdes::Encode,
     version::{cleaner::CleanTag, edit::VersionEdit, Version, VersionError, VersionRef},
-    wal::{provider::FileProvider, FileId, FileManager},
+    wal::{
+        provider::{FileProvider, FileType},
+        FileId,
+    },
     DbOption,
 };
 
@@ -31,7 +34,7 @@ where
 {
     inner: Arc<RwLock<VersionSetInner<S, FP>>>,
     clean_sender: Sender<CleanTag>,
-    file_manager: Arc<FileManager<FP>>,
+    file_provider: Arc<FP>,
 }
 
 impl<S, FP> Clone for VersionSet<S, FP>
@@ -43,7 +46,7 @@ where
         VersionSet {
             inner: self.inner.clone(),
             clean_sender: self.clean_sender.clone(),
-            file_manager: self.file_manager.clone(),
+            file_provider: self.file_provider.clone(),
         }
     }
 }
@@ -56,7 +59,7 @@ where
     pub(crate) async fn new(
         option: &DbOption,
         clean_sender: Sender<CleanTag>,
-        file_manager: Arc<FileManager<FP>>,
+        file_manager: Arc<FP>,
     ) -> Result<Self, VersionError<S>> {
         let mut log = fs::File::from(
             OpenOptions::new()
@@ -80,7 +83,7 @@ where
                 log,
             })),
             clean_sender,
-            file_manager,
+            file_provider: file_manager,
         };
         set.apply_edits(edits, None, true).await?;
 
@@ -112,7 +115,7 @@ where
                 VersionEdit::Add { mut scope, level } => {
                     if let Some(wal_ids) = scope.wal_ids.take() {
                         for wal_id in wal_ids {
-                            self.file_manager.remove_wal_file(wal_id).unwrap();
+                            self.file_provider.remove(wal_id, FileType::WAL).unwrap();
                         }
                     }
                     new_version.level_slice[level as usize].push(scope);

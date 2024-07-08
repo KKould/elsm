@@ -36,7 +36,7 @@ impl FileProvider for InMemProvider {
         })
     }
 
-    fn remove(&self, _fid: FileId) -> io::Result<()> {
+    fn remove(&self, _fid: FileId, _file_type: FileType) -> io::Result<()> {
         // FIXME
         Ok(())
     }

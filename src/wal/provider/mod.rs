@@ -27,7 +27,7 @@ pub trait FileProvider: Send + Sync + 'static {
     ) -> impl Future<Output = io::Result<Self::File>> + Send;
 
     // FIXME: async
-    fn remove(&self, fid: FileId) -> io::Result<()>;
+    fn remove(&self, fid: FileId, file_type: FileType) -> io::Result<()>;
 
     fn wal_list(&self) -> io::Result<impl Stream<Item = io::Result<(Self::File, FileId)>>>;
 }

@@ -11,7 +11,7 @@ use pin_project::pin_project;
 use crate::{
     schema::Schema,
     stream::{table_stream::TableStream, StreamError},
-    wal::{provider::FileProvider, FileId, FileManager},
+    wal::{provider::FileProvider, FileId},
 };
 
 type LevelStreamFuture<'stream, S, FP> = Pin<
@@ -34,7 +34,7 @@ where
 {
     lower: Option<S::PrimaryKey>,
     upper: Option<S::PrimaryKey>,
-    file_manager: Arc<FileManager<FP>>,
+    file_manager: Arc<FP>,
     gens: VecDeque<FileId>,
     stream: Option<TableStream<'stream, S, FP>>,
     future: Option<LevelStreamFuture<'stream, S, FP>>,
@@ -46,7 +46,7 @@ where
     FP: FileProvider,
 {
     pub(crate) async fn new(
-        file_manager: Arc<FileManager<FP>>,
+        file_manager: Arc<FP>,
         gens: Vec<FileId>,
         lower: Option<&S::PrimaryKey>,
         upper: Option<&S::PrimaryKey>,

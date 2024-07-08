@@ -28,7 +28,7 @@ use crate::{
     version::cleaner::CleanTag,
     wal::{
         provider::{FileProvider, FileType},
-        FileId, FileManager,
+        FileId,
     },
 };
 
@@ -44,7 +44,7 @@ where
     pub(crate) num: usize,
     pub(crate) level_slice: [Vec<Scope<S::PrimaryKey>>; MAX_LEVEL],
     pub(crate) clean_sender: Sender<CleanTag>,
-    pub(crate) file_manager: Arc<FileManager<FP>>,
+    pub(crate) file_manager: Arc<FP>,
 }
 
 impl<S, FP> Clone for Version<S, FP>
@@ -157,10 +157,9 @@ where
     async fn read_parquet(
         scope_gen: FileId,
         key_scalar: &S::PrimaryKeyArray,
-        file_manager: &FileManager<FP>,
+        file_provider: &FP,
     ) -> Result<Option<RecordBatch>, VersionError<S>> {
-        let mut file = file_manager
-            .file_provider
+        let mut file = file_provider
             .open(scope_gen, FileType::PARQUET)
             .await
             .map_err(VersionError::Io)?;
