@@ -30,16 +30,14 @@ use futures::{
         mpsc::{channel, Sender},
         oneshot,
     },
+    io::{AsyncRead, AsyncWrite},
     StreamExt,
 };
 use mem_table::MemTable;
 use oracle::Oracle;
 use record::{Record, RecordType};
 use serdes::Encode;
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-    spawn,
-};
+use tokio::spawn;
 use tracing::error;
 use transaction::Transaction;
 use ulid::Ulid;
@@ -134,10 +132,9 @@ where
         let (task_tx, mut task_rx) = channel(1);
         let (mut cleaner, clean_sender) = Cleaner::new(option.clone());
 
-        let version_set =
-            VersionSet::<S, FP>::new(&option, clean_sender.clone(), file_provider.clone())
-                .await
-                .map_err(|err| WriteError::Internal(Box::new(err)))?;
+        let version_set = VersionSet::<S, FP>::new(clean_sender.clone(), file_provider.clone())
+            .await
+            .map_err(|err| WriteError::Internal(Box::new(err)))?;
         let mut compactor = Compactor::<S, FP>::new(
             immutable.clone(),
             option.clone(),
@@ -563,10 +560,7 @@ impl DbOption {
     }
 
     pub(crate) fn table_path(&self, gen: &FileId) -> PathBuf {
-        self.path.join(format!("{}.parquet", gen))
-    }
-    pub(crate) fn version_path(&self) -> PathBuf {
-        self.path.join("version.log")
+        self.path.join(format!("{}.{}", gen, FileType::PARQUET))
     }
 
     pub(crate) fn is_threshold_exceeded_major<S, FP>(
@@ -598,10 +592,12 @@ mod tests {
         record_batch::RecordBatch,
     };
     use elsm_marco::elsm_schema;
-    use futures::StreamExt;
+    use futures::{
+        io::{AsyncRead, AsyncWrite},
+        StreamExt,
+    };
     use lazy_static::lazy_static;
     use tempfile::TempDir;
-    use tokio::io::{AsyncRead, AsyncWrite};
 
     use crate::{
         io,

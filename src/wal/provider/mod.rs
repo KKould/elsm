@@ -7,14 +7,17 @@ use std::{
     io,
 };
 
-use futures::Stream;
-use tokio::io::{AsyncRead, AsyncSeek, AsyncWrite};
+use futures::{
+    io::{AsyncRead, AsyncSeek, AsyncWrite},
+    Stream,
+};
 
 use crate::wal::FileId;
 
 pub enum FileType {
     WAL,
     PARQUET,
+    VERSION,
 }
 
 pub trait FileProvider: Send + Sync + 'static {
@@ -37,6 +40,7 @@ impl Display for FileType {
         match self {
             FileType::WAL => write!(f, "wal"),
             FileType::PARQUET => write!(f, "parquet"),
+            FileType::VERSION => write!(f, "version"),
         }
     }
 }

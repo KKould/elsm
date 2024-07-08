@@ -16,6 +16,7 @@ use parquet::arrow::{
     ParquetRecordBatchStreamBuilder, ProjectionMask,
 };
 use pin_project::pin_project;
+use tokio_util::compat::{Compat, FuturesAsyncReadCompatExt};
 
 use crate::{
     schema::Schema,
@@ -32,7 +33,7 @@ where
     S: Schema,
     FP: FileProvider,
 {
-    inner: ParquetRecordBatchStream<FP::File>,
+    inner: ParquetRecordBatchStream<Compat<FP::File>>,
     stream: Option<BatchStream<S>>,
     file_provider: Arc<FP>,
     _p: PhantomData<&'stream ()>,
@@ -55,7 +56,8 @@ where
         let mut file = file_provider
             .open(gen, FileType::PARQUET)
             .await
-            .map_err(StreamError::Io)?;
+            .map_err(StreamError::Io)?
+            .compat();
         let meta = ArrowReaderMetadata::load_async(&mut file, Default::default())
             .await
             .map_err(StreamError::Parquet)?;

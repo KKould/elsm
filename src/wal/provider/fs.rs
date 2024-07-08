@@ -1,6 +1,6 @@
 use std::{
     fs,
-    fs::{DirEntry, OpenOptions},
+    fs::DirEntry,
     io,
     path::{Path, PathBuf},
 };
@@ -10,7 +10,8 @@ use futures::Stream;
 use itertools::Itertools;
 use once_cell::sync::Lazy;
 use regex::Regex;
-use tokio::fs::File;
+use tokio::fs::{File, OpenOptions};
+use tokio_util::compat::{Compat, TokioAsyncReadCompatExt};
 
 use super::{FileProvider, FileType};
 use crate::wal::FileId;
@@ -32,15 +33,16 @@ impl Fs {
 }
 
 impl FileProvider for Fs {
-    type File = File;
+    type File = Compat<File>;
 
     async fn open(&self, fid: FileId, file_type: FileType) -> io::Result<Self::File> {
         Ok(OpenOptions::new()
             .create(true)
             .write(true)
             .read(true)
-            .open(self.path.join(format!("{}.{}", fid, file_type)))?
-            .into())
+            .open(self.path.join(format!("{}.{}", fid, file_type)))
+            .await?
+            .compat())
     }
 
     fn remove(&self, fid: FileId, file_type: FileType) -> io::Result<()> {
@@ -63,11 +65,7 @@ impl FileProvider for Fs {
                                 .split('.')
                                 .next()
                                 .unwrap()).unwrap();
-                            yield Ok((OpenOptions::new()
-                                .create(true)
-                                .write(true)
-                                .read(true)
-                                .open(self.path.join(filename))?.into(), file_id))
+                            yield Ok((File::open(self.path.join(filename)).await?.compat(), file_id))
                         }
                     }
                 }

@@ -1,11 +1,8 @@
-use std::{fs::OpenOptions, io::SeekFrom, sync::Arc};
+use std::{io::SeekFrom, sync::Arc};
 
 use async_lock::RwLock;
-use futures::{channel::mpsc::Sender, SinkExt};
-use tokio::{
-    fs,
-    io::{AsyncSeekExt, AsyncWriteExt},
-};
+use futures::{channel::mpsc::Sender, AsyncSeekExt, AsyncWriteExt, SinkExt};
+use ulid::Ulid;
 
 use crate::{
     schema::Schema,
@@ -15,7 +12,6 @@ use crate::{
         provider::{FileProvider, FileType},
         FileId,
     },
-    DbOption,
 };
 
 pub(crate) struct VersionSetInner<S, FP>
@@ -24,7 +20,7 @@ where
     FP: FileProvider,
 {
     current: VersionRef<S, FP>,
-    log: fs::File,
+    log: FP::File,
 }
 
 pub(crate) struct VersionSet<S, FP>
@@ -57,18 +53,13 @@ where
     FP: FileProvider,
 {
     pub(crate) async fn new(
-        option: &DbOption,
         clean_sender: Sender<CleanTag>,
-        file_manager: Arc<FP>,
+        file_provider: Arc<FP>,
     ) -> Result<Self, VersionError<S>> {
-        let mut log = fs::File::from(
-            OpenOptions::new()
-                .create(true)
-                .write(true)
-                .read(true)
-                .open(option.version_path())
-                .map_err(VersionError::Io)?,
-        );
+        let mut log = file_provider
+            .open(Ulid::nil(), FileType::VERSION)
+            .await
+            .map_err(VersionError::Io)?;
         let edits = VersionEdit::recover(&mut log).await;
         log.seek(SeekFrom::End(0)).await.map_err(VersionError::Io)?;
 
@@ -78,12 +69,12 @@ where
                     num: 0,
                     level_slice: Version::<S, FP>::level_slice_new(),
                     clean_sender: clean_sender.clone(),
-                    file_manager: file_manager.clone(),
+                    file_manager: file_provider.clone(),
                 }),
                 log,
             })),
             clean_sender,
-            file_provider: file_manager,
+            file_provider,
         };
         set.apply_edits(edits, None, true).await?;
 

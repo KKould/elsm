@@ -3,6 +3,7 @@ use std::{cmp, collections::VecDeque, fmt::Debug, mem, pin::pin, sync::Arc};
 use futures::{channel::oneshot, StreamExt};
 use parquet::arrow::AsyncArrowWriter;
 use thiserror::Error;
+use tokio_util::compat::FuturesAsyncReadCompatExt;
 use ulid::Ulid;
 
 use crate::{
@@ -110,7 +111,8 @@ where
                 file_provider
                     .open(gen, FileType::PARQUET)
                     .await
-                    .map_err(CompactionError::Io)?,
+                    .map_err(CompactionError::Io)?
+                    .compat(),
                 S::inner_schema(),
                 None,
             )
@@ -311,7 +313,8 @@ where
             file_provider
                 .open(gen, FileType::PARQUET)
                 .await
-                .map_err(CompactionError::Io)?,
+                .map_err(CompactionError::Io)?
+                .compat(),
             S::inner_schema(),
             None,
         )

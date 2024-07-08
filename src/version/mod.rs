@@ -18,6 +18,7 @@ use parquet::arrow::{
     ParquetRecordBatchStreamBuilder, ProjectionMask,
 };
 use thiserror::Error;
+use tokio_util::compat::FuturesAsyncReadCompatExt;
 use tracing::error;
 
 use crate::{
@@ -162,7 +163,8 @@ where
         let mut file = file_provider
             .open(scope_gen, FileType::PARQUET)
             .await
-            .map_err(VersionError::Io)?;
+            .map_err(VersionError::Io)?
+            .compat();
         let meta = ArrowReaderMetadata::load_async(&mut file, Default::default())
             .await
             .map_err(VersionError::Parquet)?;

@@ -1,6 +1,6 @@
 use std::mem::size_of;
 
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use futures::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{
     scope::Scope,
@@ -106,9 +106,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
-
-    use futures::executor::block_on;
+    use futures::{executor::block_on, io::Cursor};
 
     use crate::{scope::Scope, serdes::Encode, version::edit::VersionEdit, wal::FileId};
 

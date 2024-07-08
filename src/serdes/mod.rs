@@ -6,7 +6,7 @@ mod string;
 
 use std::{future::Future, io};
 
-use tokio::io::{AsyncRead, AsyncWrite};
+use futures::io::{AsyncRead, AsyncWrite};
 
 pub trait Encode: Send + Sync {
     type Error: From<io::Error> + std::error::Error + Send + Sync + 'static;

@@ -5,9 +5,11 @@ use std::{error::Error, future::Future, io, marker::PhantomData};
 
 use async_stream::stream;
 use checksum::{HashReader, HashWriter};
-use futures::Stream;
+use futures::{
+    io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader},
+    Stream,
+};
 use thiserror::Error;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use ulid::Ulid;
 
 use crate::{
@@ -140,6 +142,7 @@ mod tests {
     use std::{io::Cursor, pin::pin};
 
     use futures::{executor::block_on, StreamExt};
+    use tokio_util::compat::TokioAsyncReadCompatExt;
 
     use super::{FileId, Record, WalFile, WalRecover, WalWrite};
     use crate::record::RecordType;
@@ -149,7 +152,7 @@ mod tests {
         let mut file = Vec::new();
         block_on(async {
             {
-                let mut wal = WalFile::new(Cursor::new(&mut file), FileId::new());
+                let mut wal = WalFile::new(Cursor::new(&mut file).compat(), FileId::new());
                 wal.write(Record::new(
                     RecordType::Full,
                     &"key".to_string(),
@@ -161,7 +164,7 @@ mod tests {
                 wal.flush().await.unwrap();
             }
             {
-                let mut wal = WalFile::new(Cursor::new(&mut file), FileId::new());
+                let mut wal = WalFile::new(Cursor::new(&mut file).compat(), FileId::new());
 
                 {
                     let mut stream = pin!(wal.recover());
@@ -183,7 +186,7 @@ mod tests {
             }
 
             {
-                let mut wal = WalFile::new(Cursor::new(&mut file), FileId::new());
+                let mut wal = WalFile::new(Cursor::new(&mut file).compat(), FileId::new());
 
                 {
                     let mut stream = pin!(wal.recover());
