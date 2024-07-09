@@ -27,6 +27,7 @@ pub fn elsm_schema(_args: TokenStream, input: TokenStream) -> TokenStream {
     let mut new_fields_definitions: Vec<proc_macro2::TokenStream> = Vec::new();
 
     let mut init_inner_builders: Vec<proc_macro2::TokenStream> = Vec::new();
+    let mut init_batch_builders: Vec<proc_macro2::TokenStream> = Vec::new();
     let mut inner_from_batch_arrays: Vec<proc_macro2::TokenStream> = Vec::new();
 
     let mut encode_method_fields: Vec<proc_macro2::TokenStream> = Vec::new();
@@ -34,12 +35,14 @@ pub fn elsm_schema(_args: TokenStream, input: TokenStream) -> TokenStream {
 
     let mut decode_method_fields: Vec<proc_macro2::TokenStream> = Vec::new();
 
-    let mut builder_append_value: Vec<proc_macro2::TokenStream> = Vec::new();
-    let mut builder_append_null: Vec<proc_macro2::TokenStream> = Vec::new();
+    let mut schema_builder_append_value: Vec<proc_macro2::TokenStream> = Vec::new();
+    let mut schema_builder_append_null: Vec<proc_macro2::TokenStream> = Vec::new();
+
+    let mut batch_builder_append_value: Vec<proc_macro2::TokenStream> = Vec::new();
 
     if let Data::Struct(data_struct) = &ast.data {
         if let Fields::Named(fields) = &data_struct.fields {
-            for field in fields.named.iter() {
+            for (i, field) in fields.named.iter().enumerate() {
                 let field_name = field.ident.as_ref().unwrap();
                 let mut is_string = false;
                 let (field_ty, mapped_type, array_ty, builder_ty) = match &field.ty {
@@ -127,6 +130,21 @@ pub fn elsm_schema(_args: TokenStream, input: TokenStream) -> TokenStream {
                 encode_size_fields.push(quote! {
                     + self.inner.#field_name.size()
                 });
+                init_batch_builders.push(quote! { Box::new(#builder_ty::new()), });
+                let append_field = if is_string {
+                    quote! { &schema.inner.#field_name }
+                } else {
+                    quote! { schema.inner.#field_name }
+                };
+                batch_builder_append_value.push({
+                    quote! {
+                        self.builders[#i]
+                            .as_any_mut()
+                            .downcast_mut::<#builder_ty>()
+                            .unwrap()
+                            .append_value(#append_field);
+                    }
+                });
                 match attrs.parse_field(field) {
                     Ok(false) => {
                         inner_field_definitions.push(quote! {
@@ -146,21 +164,15 @@ pub fn elsm_schema(_args: TokenStream, input: TokenStream) -> TokenStream {
                                 .unwrap();
                             let #field_name = #array_name.value(offset).to_owned();
                         });
-                        builder_append_value.push({
-                            let field = if is_string {
-                                quote! { &schema.inner.#field_name }
-                            } else {
-                                quote! { schema.inner.#field_name }
-                            };
-
+                        schema_builder_append_value.push({
                             quote! {
                                 self.inner
                                     .field_builder::<#builder_ty>(#normal_field_count)
                                     .unwrap()
-                                    .append_value(#field);
+                                    .append_value(#append_field);
                             }
                         });
-                        builder_append_null.push(quote! {
+                        schema_builder_append_null.push(quote! {
                             self.inner
                                 .field_builder::<#builder_ty>(#normal_field_count)
                                 .unwrap()
@@ -218,7 +230,10 @@ pub fn elsm_schema(_args: TokenStream, input: TokenStream) -> TokenStream {
     );
 
     let inner_struct_name = Ident::new(&format!("{}Inner", struct_name), struct_name.span());
-    let builder_name = Ident::new(&format!("{}Builder", struct_name), struct_name.span());
+    let schema_builder_name =
+        Ident::new(&format!("{}SchemaBuilder", struct_name), struct_name.span());
+    let batch_builder_name =
+        Ident::new(&format!("{}BatchBuilder", struct_name), struct_name.span());
 
     let gen = quote! {
         lazy_static! {
@@ -263,7 +278,8 @@ pub fn elsm_schema(_args: TokenStream, input: TokenStream) -> TokenStream {
 
         impl Schema for #inner_struct_name {
             type PrimaryKey = #base_ty;
-            type Builder = #builder_name;
+            type SchemaBuilder = #schema_builder_name;
+            type BatchBuilder = #batch_builder_name;
             type PrimaryKeyArray = #array_ty;
 
             fn arrow_schema() -> SchemaRef {
@@ -278,13 +294,19 @@ pub fn elsm_schema(_args: TokenStream, input: TokenStream) -> TokenStream {
                 self.inner.#primary_key_name.to_owned()
             }
 
-            fn builder() -> Self::Builder {
-                #builder_name {
+            fn schema_builder() -> Self::SchemaBuilder {
+                #schema_builder_name {
                     #primary_key_name: Default::default(),
                     inner: StructBuilder::new(
                         #inner_fields_name.clone(),
                         vec![#(#init_inner_builders)*],
                     ),
+                }
+            }
+
+             fn batch_builder() -> Self::BatchBuilder {
+                #batch_builder_name {
+                    builders: vec![#(#init_batch_builders)*],
                 }
             }
 
@@ -348,26 +370,45 @@ pub fn elsm_schema(_args: TokenStream, input: TokenStream) -> TokenStream {
             }
         }
 
-        pub(crate) struct #builder_name {
+        pub(crate) struct #schema_builder_name {
             #primary_key_name: #builder_ty,
             inner: StructBuilder,
         }
 
-        impl Builder<#inner_struct_name> for #builder_name {
+        impl SchemaBuilder<#inner_struct_name> for #schema_builder_name {
             fn add(&mut self, primary_key: &<#inner_struct_name as Schema>::PrimaryKey, schema: Option<#inner_struct_name>) {
                 self.#primary_key_name.append_value(#primary_key_append_value);
 
                 if let Some(schema) = schema {
-                    #(#builder_append_value)*
+                    #(#schema_builder_append_value)*
                     self.inner.append(true);
                 } else {
-                    #(#builder_append_null)*
+                    #(#schema_builder_append_null)*
                     self.inner.append_null();
                 }
             }
 
             fn finish(&mut self) -> RecordBatch {
                 RecordBatch::try_new(#inner_struct_name::inner_schema(), vec![Arc::new(self.#primary_key_name.finish()), Arc::new(self.inner.finish())]).unwrap()
+            }
+        }
+
+        pub(crate) struct #batch_builder_name {
+            builders: Vec<Box<dyn ArrayBuilder>>,
+        }
+
+        impl BatchBuilder<#inner_struct_name> for #batch_builder_name {
+            fn add(&mut self, schema: #inner_struct_name) {
+                #(#batch_builder_append_value)*
+            }
+
+            fn finish(&mut self) -> RecordBatch {
+                let arrays = self.builders
+                    .iter_mut()
+                    .map(|builder| builder.finish())
+                    .collect_vec();
+
+                RecordBatch::try_new(#inner_struct_name::arrow_schema(), arrays).unwrap()
             }
         }
     };

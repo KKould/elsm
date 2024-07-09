@@ -9,7 +9,8 @@ use crate::serdes::{Decode, Encode};
 
 pub trait Schema: Debug + Clone + Encode + Decode + 'static {
     type PrimaryKey: Debug + Clone + Ord + Hash + Encode + Decode + 'static;
-    type Builder: Builder<Self> + Send;
+    type SchemaBuilder: SchemaBuilder<Self> + Send;
+    type BatchBuilder: BatchBuilder<Self> + Send;
     type PrimaryKeyArray: Array;
 
     fn arrow_schema() -> SchemaRef;
@@ -18,15 +19,23 @@ pub trait Schema: Debug + Clone + Encode + Decode + 'static {
 
     fn primary_key(&self) -> Self::PrimaryKey;
 
-    fn builder() -> Self::Builder;
+    fn schema_builder() -> Self::SchemaBuilder;
+
+    fn batch_builder() -> Self::BatchBuilder;
 
     fn from_batch(batch: &RecordBatch, offset: usize) -> (Self::PrimaryKey, Option<Self>);
 
     fn to_primary_key_array(keys: Vec<Self::PrimaryKey>) -> Self::PrimaryKeyArray;
 }
 
-pub trait Builder<S: Schema> {
+pub trait SchemaBuilder<S: Schema> {
     fn add(&mut self, primary_key: &S::PrimaryKey, schema: Option<S>);
+
+    fn finish(&mut self) -> RecordBatch;
+}
+
+pub trait BatchBuilder<S: Schema> {
+    fn add(&mut self, schema: S);
 
     fn finish(&mut self) -> RecordBatch;
 }

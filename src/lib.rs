@@ -49,7 +49,7 @@ use crate::{
     compactor::Compactor,
     index_batch::IndexBatch,
     oracle::TimeStamp,
-    schema::Builder,
+    schema::SchemaBuilder,
     serdes::Decode,
     stream::{buf_stream::BufStream, merge_stream::MergeStream, EStreamImpl, StreamError},
     version::{cleaner::Cleaner, set::VersionSet, Version},
@@ -114,7 +114,7 @@ where
         file_provider: FP,
         option: DbOption,
     ) -> Result<Self, WriteError<<Record<S::PrimaryKey, S> as Encode>::Error>> {
-        fs::create_dir_all(&option.path).unwrap();
+        fs::create_dir_all(&option.path).map_err(WriteError::Io)?;
 
         let file_provider = Arc::new(file_provider);
         let file_id = Ulid::new();
@@ -397,7 +397,7 @@ where
     ) -> Result<IndexBatch<S>, WriteError<<Record<S::PrimaryKey, S> as Encode>::Error>> {
         let mut index = BTreeMap::new();
 
-        let mut builder = S::builder();
+        let mut builder = S::schema_builder();
 
         for (offset, (key, value)) in mem_table.data.into_iter().enumerate() {
             builder.add(&key.key, value);
@@ -587,10 +587,10 @@ mod tests {
 
     use arrow::{
         array::{
-            Array, BooleanArray, BooleanBuilder, Int16Array, Int16Builder, Int32Array,
-            Int32Builder, Int64Array, Int64Builder, Int8Array, Int8Builder, StringArray,
-            StringBuilder, StructArray, StructBuilder, UInt16Array, UInt16Builder, UInt32Array,
-            UInt32Builder, UInt64Array, UInt64Builder, UInt8Array, UInt8Builder,
+            Array, ArrayBuilder, BooleanArray, BooleanBuilder, Int16Array, Int16Builder,
+            Int32Array, Int32Builder, Int64Array, Int64Builder, Int8Array, Int8Builder,
+            StringArray, StringBuilder, StructArray, StructBuilder, UInt16Array, UInt16Builder,
+            UInt32Array, UInt32Builder, UInt64Array, UInt64Builder, UInt8Array, UInt8Builder,
         },
         datatypes::{DataType, Field, Fields, SchemaRef},
         record_batch::RecordBatch,
@@ -600,6 +600,7 @@ mod tests {
         io::{AsyncRead, AsyncWrite},
         StreamExt,
     };
+    use itertools::Itertools;
     use lazy_static::lazy_static;
     use tempfile::TempDir;
 
@@ -607,11 +608,11 @@ mod tests {
         io,
         oracle::LocalOracle,
         record::RecordType,
-        schema::Schema,
+        schema::{BatchBuilder, Schema},
         stream::merge_stream::MergeStream,
         transaction::CommitError,
         wal::provider::{fs::Fs, in_mem::InMemProvider},
-        Builder, Db, DbOption, Decode, Encode,
+        Db, DbOption, Decode, Encode, SchemaBuilder,
     };
 
     #[derive(Debug, Eq, PartialEq)]

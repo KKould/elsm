@@ -8,7 +8,7 @@ use ulid::Ulid;
 
 use crate::{
     index_batch::IndexBatch,
-    schema::{Builder, Schema},
+    schema::{Schema, SchemaBuilder},
     scope::Scope,
     serdes::Encode,
     stream::{
@@ -241,7 +241,7 @@ where
                 .map_err(CompactionError::Stream)?;
 
             let mut stream = pin!(stream);
-            let mut builder = S::builder();
+            let mut builder = S::schema_builder();
             let mut written_size = 0;
             let mut min = None;
             let mut max = None;
@@ -307,7 +307,7 @@ where
         file_provider: &FP,
         version_edits: &mut Vec<VersionEdit<S::PrimaryKey>>,
         level: usize,
-        builder: &mut S::Builder,
+        builder: &mut S::SchemaBuilder,
         min: &mut Option<S::PrimaryKey>,
         max: &mut Option<S::PrimaryKey>,
     ) -> Result<(), CompactionError<S>> {
@@ -378,7 +378,7 @@ mod tests {
         index_batch::IndexBatch,
         mem_table::InternalKey,
         schema,
-        schema::Builder,
+        schema::SchemaBuilder,
         scope::Scope,
         tests::UserInner,
         version::{edit::VersionEdit, Version},
@@ -394,7 +394,7 @@ mod tests {
         S: schema::Schema,
     {
         let mut index = BTreeMap::new();
-        let mut builder = S::builder();
+        let mut builder = S::schema_builder();
 
         for (offset, (schema, is_deleted)) in items.into_iter().enumerate() {
             index.insert(

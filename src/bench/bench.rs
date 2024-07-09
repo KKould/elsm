@@ -17,7 +17,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use elsm::{
     oracle::LocalOracle,
     record::RecordType,
-    schema::{Builder, Schema},
+    schema::{Schema, SchemaBuilder},
     serdes::{Decode, Encode},
     wal::provider::fs::Fs,
     Db, DbOption,
