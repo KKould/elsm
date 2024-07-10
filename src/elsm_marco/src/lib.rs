@@ -403,10 +403,10 @@ pub fn elsm_schema(_args: TokenStream, input: TokenStream) -> TokenStream {
             }
 
             fn finish(&mut self) -> RecordBatch {
-                let arrays = self.builders
+                let arrays: Vec<_> = self.builders
                     .iter_mut()
                     .map(|builder| builder.finish())
-                    .collect_vec();
+                    .collect();
 
                 RecordBatch::try_new(#inner_struct_name::arrow_schema(), arrays).unwrap()
             }

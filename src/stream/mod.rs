@@ -22,7 +22,7 @@ pub(crate) mod batch_stream;
 pub(crate) mod buf_stream;
 pub(crate) mod level_stream;
 pub(crate) mod merge_stream;
-pub(crate) mod record_batch_stream;
+pub mod record_batch_stream;
 pub(crate) mod table_stream;
 
 #[pin_project(project = EStreamImplProj)]

@@ -56,8 +56,8 @@ where
         }
     }
 
-    pub fn set(&mut self, key: S::PrimaryKey, value: S) {
-        self.entry(key, Some(value))
+    pub fn set(&mut self, value: S) {
+        self.entry(value.primary_key(), Some(value))
     }
 
     pub fn remove(&mut self, key: S::PrimaryKey) {

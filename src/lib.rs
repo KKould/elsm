@@ -651,9 +651,9 @@ mod tests {
 
         let mut t0 = db.new_txn();
 
-        t0.set(user_0.primary_key(), user_0.clone());
-        t0.set(user_1.primary_key(), user_1.clone());
-        t0.set(user_2.primary_key(), user_2.clone());
+        t0.set(user_0.clone());
+        t0.set(user_1.clone());
+        t0.set(user_2.clone());
 
         t0.commit().await.unwrap();
 
@@ -679,21 +679,39 @@ mod tests {
         );
 
         let mut txn = db.new_txn();
-        txn.set(
+        txn.set(UserInner::new(
             0,
-            UserInner::new(0, "0".to_string(), false, 0, 0, 0, 0, 0, 0, 0, 0),
-        );
-        txn.set(
+            "0".to_string(),
+            false,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ));
+        txn.set(UserInner::new(
             1,
-            UserInner::new(1, "1".to_string(), false, 0, 0, 0, 0, 0, 0, 0, 0),
-        );
+            "1".to_string(),
+            false,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ));
         txn.commit().await.unwrap();
 
         let mut t0 = db.new_txn();
         let mut t1 = db.new_txn();
 
-        t0.set(0, t0.get(&1).await.unwrap());
-        t1.set(1, t1.get(&0).await.unwrap());
+        t0.set(t0.get(&1).await.unwrap());
+        t1.set(t1.get(&0).await.unwrap());
 
         t0.commit().await.unwrap();
         t1.commit().await.unwrap();
@@ -749,22 +767,58 @@ mod tests {
         );
 
         let mut txn = db.new_txn();
-        txn.set(
+        txn.set(UserInner::new(
             0,
-            UserInner::new(0, "0".to_string(), false, 0, 0, 0, 0, 0, 0, 0, 0),
-        );
-        txn.set(
+            "0".to_string(),
+            false,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ));
+        txn.set(UserInner::new(
             1,
-            UserInner::new(1, "1".to_string(), false, 0, 0, 0, 0, 0, 0, 0, 0),
-        );
-        txn.set(
+            "1".to_string(),
+            false,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ));
+        txn.set(UserInner::new(
             2,
-            UserInner::new(2, "2".to_string(), false, 0, 0, 0, 0, 0, 0, 0, 0),
-        );
-        txn.set(
+            "2".to_string(),
+            false,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ));
+        txn.set(UserInner::new(
             3,
-            UserInner::new(3, "3".to_string(), false, 0, 0, 0, 0, 0, 0, 0, 0),
-        );
+            "3".to_string(),
+            false,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ));
         txn.commit().await.unwrap();
 
         let mut iter: MergeStream<UserInner, InMemProvider> =
@@ -810,24 +864,60 @@ mod tests {
         );
 
         let mut txn_1 = db.new_txn();
-        txn_1.set(
+        txn_1.set(UserInner::new(
             5,
-            UserInner::new(5, "5".to_string(), false, 0, 0, 0, 0, 0, 0, 0, 0),
-        );
-        txn_1.set(
+            "5".to_string(),
+            false,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ));
+        txn_1.set(UserInner::new(
             4,
-            UserInner::new(4, "4".to_string(), false, 0, 0, 0, 0, 0, 0, 0, 0),
-        );
+            "4".to_string(),
+            false,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ));
 
         let mut txn_2 = db.new_txn();
-        txn_2.set(
-            5,
-            UserInner::new(4, "4".to_string(), false, 0, 0, 0, 0, 0, 0, 0, 0),
-        );
-        txn_2.set(
+        txn_2.set(UserInner::new(
             4,
-            UserInner::new(5, "5".to_string(), false, 0, 0, 0, 0, 0, 0, 0, 0),
-        );
+            "4".to_string(),
+            false,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ));
+        txn_2.set(UserInner::new(
+            5,
+            "5".to_string(),
+            false,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ));
         txn_2.commit().await.unwrap();
 
         let mut iter = txn_1.range(Some(&1), Some(&4)).await.unwrap();
@@ -925,30 +1015,66 @@ mod tests {
         );
 
         let mut txn = db.new_txn();
-        txn.set(
+        txn.set(UserInner::new(
             0,
-            UserInner::new(0, "0".to_string(), false, 0, 0, 0, 0, 0, 0, 0, 0),
-        );
-        txn.set(
+            "0".to_string(),
+            false,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ));
+        txn.set(UserInner::new(
             1,
-            UserInner::new(1, "1".to_string(), false, 0, 0, 0, 0, 0, 0, 0, 0),
-        );
+            "1".to_string(),
+            false,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ));
         txn.commit().await.unwrap();
 
         let mut t0 = db.new_txn();
         let mut t1 = db.new_txn();
         let mut t2 = db.new_txn();
 
-        t0.set(0, t0.get(&1).await.unwrap());
-        t1.set(0, t1.get(&0).await.unwrap());
-        t1.set(
+        t0.set(t0.get(&1).await.unwrap());
+        t1.set(t1.get(&0).await.unwrap());
+        t1.set(UserInner::new(
             2,
-            UserInner::new(2, "2".to_string(), false, 0, 0, 0, 0, 0, 0, 0, 0),
-        );
-        t2.set(
-            2,
-            UserInner::new(3, "3".to_string(), false, 0, 0, 0, 0, 0, 0, 0, 0),
-        );
+            "2".to_string(),
+            false,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ));
+        t2.set(UserInner::new(
+            3,
+            "3".to_string(),
+            false,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ));
 
         t0.commit().await.unwrap();
 
@@ -1139,14 +1265,32 @@ mod tests {
         );
 
         let mut txn = db.new_txn();
-        txn.set(
+        txn.set(UserInner::new(
             0,
-            UserInner::new(0, "0".to_string(), false, 0, 0, 0, 0, 0, 0, 0, 0),
-        );
-        txn.set(
+            "0".to_string(),
+            false,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ));
+        txn.set(UserInner::new(
             1,
-            UserInner::new(1, "1".to_string(), false, 0, 0, 0, 0, 0, 0, 0, 0),
-        );
+            "1".to_string(),
+            false,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ));
         txn.commit().await.unwrap();
 
         drop(db);

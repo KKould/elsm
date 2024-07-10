@@ -14,7 +14,7 @@ use crate::{
 };
 
 #[pin_project]
-pub(crate) struct RecordBatchStream<'stream, S, FP>
+pub struct RecordBatchStream<'stream, S, FP>
 where
     S: Schema,
     FP: FileProvider,
@@ -30,7 +30,7 @@ where
     S: Schema,
     FP: FileProvider,
 {
-    pub(crate) fn new(iter: MergeStream<'stream, S, FP>, batch_size: usize) -> Self {
+    pub fn new(iter: MergeStream<'stream, S, FP>, batch_size: usize) -> Self {
         Self {
             row_count: 0,
             batch_size,
