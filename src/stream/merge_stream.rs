@@ -68,30 +68,32 @@ where
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let this = self.project();
-        while let Some(Reverse((
-            CmpKeyItem {
-                key: item_key,
-                _value: item_value,
-            },
-            idx,
-        ))) = this.heap.pop()
-        {
-            match Pin::new(&mut this.iters[idx]).poll_next(cx) {
-                Poll::Ready(Some(item)) => {
-                    let (key, value) = item?;
-                    this.heap
-                        .push(Reverse((CmpKeyItem { key, _value: value }, idx)));
+        while let Some(idx) = this.heap.peek().map(|Reverse((_, idx))| *idx) {
+            return match Pin::new(&mut this.iters[idx]).poll_next(cx) {
+                Poll::Ready(result) => {
+                    let Reverse((
+                        CmpKeyItem {
+                            key: item_key,
+                            _value: item_value,
+                        },
+                        _,
+                    )) = this.heap.pop().unwrap();
 
-                    if let Some((buf_key, _)) = &this.item_buf {
-                        if buf_key == &item_key {
-                            continue;
+                    if let Some(item) = result {
+                        let (key, value) = item?;
+                        this.heap
+                            .push(Reverse((CmpKeyItem { key, _value: value }, idx)));
+
+                        if let Some((buf_key, _)) = &this.item_buf {
+                            if buf_key == &item_key {
+                                continue;
+                            }
                         }
                     }
+                    Poll::Ready(this.item_buf.replace((item_key, item_value)).map(Ok))
                 }
-                Poll::Ready(None) => (),
-                Poll::Pending => return Poll::Pending,
+                Poll::Pending => Poll::Pending,
             };
-            return Poll::Ready(this.item_buf.replace((item_key, item_value)).map(Ok));
         }
         Poll::Ready(this.item_buf.take().map(Ok))
     }

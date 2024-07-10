@@ -82,13 +82,11 @@ where
             return match future.as_mut().poll(cx) {
                 Poll::Ready(Ok(stream)) => {
                     self.stream = Some(stream);
+                    self.future = None;
                     self.poll_next(cx)
                 }
                 Poll::Ready(Err(err)) => Poll::Ready(Some(Err(err))),
-                Poll::Pending => {
-                    self.future = None;
-                    Poll::Pending
-                }
+                Poll::Pending => Poll::Pending,
             };
         }
         if let Some(stream) = &mut self.stream {
