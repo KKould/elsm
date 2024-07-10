@@ -600,7 +600,6 @@ mod tests {
         io::{AsyncRead, AsyncWrite},
         StreamExt,
     };
-    use itertools::Itertools;
     use lazy_static::lazy_static;
     use tempfile::TempDir;
 
@@ -615,7 +614,7 @@ mod tests {
         Db, DbOption, Decode, Encode, SchemaBuilder,
     };
 
-    #[derive(Debug, Eq, PartialEq)]
+    #[derive(Debug, Clone, Eq, PartialEq)]
     #[elsm_schema]
     pub(crate) struct User {
         #[primary_key]
@@ -710,8 +709,17 @@ mod tests {
         let mut t0 = db.new_txn();
         let mut t1 = db.new_txn();
 
-        t0.set(t0.get(&1).await.unwrap());
-        t1.set(t1.get(&0).await.unwrap());
+        let mut user_1 = User::clone(&t0.get(&1).await.unwrap().inner);
+        user_1.name = "0".to_string();
+        let mut user_0 = User::clone(&t1.get(&0).await.unwrap().inner);
+        user_0.name = "1".to_string();
+
+        t0.set(UserInner {
+            inner: Arc::new(user_1),
+        });
+        t1.set(UserInner {
+            inner: Arc::new(user_0),
+        });
 
         t0.commit().await.unwrap();
         t1.commit().await.unwrap();
@@ -721,7 +729,7 @@ mod tests {
         assert_eq!(
             txn.get(&Arc::from(0)).await,
             Some(UserInner::new(
-                1,
+                0,
                 "1".to_string(),
                 false,
                 0,
@@ -737,7 +745,7 @@ mod tests {
         assert_eq!(
             txn.get(&Arc::from(1)).await,
             Some(UserInner::new(
-                0,
+                1,
                 "0".to_string(),
                 false,
                 0,
@@ -1047,8 +1055,15 @@ mod tests {
         let mut t1 = db.new_txn();
         let mut t2 = db.new_txn();
 
-        t0.set(t0.get(&1).await.unwrap());
-        t1.set(t1.get(&0).await.unwrap());
+        let user_1 = t0.get(&1).await.unwrap();
+        let mut user_0 = User::clone(&t1.get(&0).await.unwrap().inner);
+        user_0.id = 1;
+
+        t0.set(user_1);
+        t1.set(UserInner {
+            inner: Arc::new(user_0),
+        });
+
         t1.set(UserInner::new(
             2,
             "2".to_string(),

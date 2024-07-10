@@ -10,15 +10,13 @@ use arrow::{
 };
 use elsm::{
     oracle::LocalOracle,
-    record::RecordType,
     schema::{BatchBuilder, Schema, SchemaBuilder},
     serdes::{Decode, Encode},
-    stream::record_batch_stream::RecordBatchStream,
     wal::provider::in_mem::InMemProvider,
     Db, DbOption,
 };
 use elsm_marco::elsm_schema;
-use futures::{AsyncRead, AsyncWrite, StreamExt};
+use futures::{AsyncRead, AsyncWrite};
 use lazy_static::lazy_static;
 use tokio::io;
 
